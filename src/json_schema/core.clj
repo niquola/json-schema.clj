@@ -3,63 +3,68 @@
 (defn add-error [ctx err]
   (update-in ctx [:errors] conj err))
 
-(defn minMaxItems [key rule schema subj ctx]
-  (if-not (vector? subj)
-    ctx
-    (let [op (cond (= key :minItems) >=
-                   (= key :maxItems) <=)
-          cnt (count subj)]
-      (if (op cnt rule)
-        ctx
-        (add-error ctx {:desc     :maxItems
-                        :actual   cnt
-                        :expected (str key " then " rule)})))))
+(defn mk-bound-fn [{type-filter-fn :type-filter-fn
+                    value-fn :value-fn
+                    operator :operator
+                    operator-fn :operator-fn}]
 
-
-(defn minMaxLength [key rule schema subj ctx]
-  (println "length" key rule schema subj ctx)
-  (if-not (string? subj)
-    ctx
-    (let [op   (cond (= key :minLength) <=
-                     (= key :maxLength) >=)
-          cnt  (.count (.codePoints subj))]
-      (if (op rule cnt)
-        ctx
-        (add-error ctx {:desc     "maxLength"
-                        :actual   cnt
-                        :expected (str key " then " rule)})))))
-
-(defn minimum [key rule schema subj ctx]
-  (if-not (number? subj)
-    ctx
-    (let [op (if (:exclusiveMinimum schema) > >=)]
-      (if (op subj rule)
-        ctx
-        (add-error ctx {:desc "maxLength"
-                        :actual subj
-                        :expected (str "more then " rule)})))))
+  (fn [key rule schema subj ctx]
+    (if-not (type-filter-fn subj)
+      ctx
+      (let [op (or operator (operator-fn key rule schema subj ctx))
+            value (value-fn subj)]
+        (if (op value rule)
+          ctx
+          (add-error ctx {:desc key 
+                          :actual value 
+                          :expected (str  key " then " rule)}))))))
 
 
 (defn skip [key rule schema subj ctx] ctx)
 
+(defn string-length [x] (.count (.codePoints x)))
+
 (def validators
-  {:maxItems minMaxItems
-   :minItems minMaxItems
+  {:modifiers #{:exclusiveMaximum :exclusiveMinimum} 
 
-   :maxLength minMaxLength
-   :minLength minMaxLength
+   :maxItems (mk-bound-fn {:type-filter-fn vector?
+                           :value-fn count
+                           :operator <=})
+   :minItems (mk-bound-fn {:type-filter-fn vector?
+                           :value-fn count
+                           :operator >=})
 
-   :minimum minimum
-   :exclusiveMinimum skip
-   :exclusiveMaximum skip})
+   :maxLength (mk-bound-fn {:type-filter-fn string?
+                            :value-fn string-length
+                            :operator <=})
+   :minLength (mk-bound-fn {:type-filter-fn string?
+                            :value-fn string-lenght 
+                            :operator >=})
+
+   :minimum (mk-bound-fn {:type-filter-fn number?
+                          :value-fn identity
+                          :operator-fn (fn [_ _ schema & _] (if (:exclusiveMinimum schema) > >=))})
+   :maximum (mk-bound-fn {:type-filter-fn number?
+                          :value-fn identity
+                          :operator-fn (fn [_ _ schema & _] (if (:exclusiveMaximum schema) < <=))})
+
+   :maxProperties (mk-bound-fn {:type-filter-fn map?
+                                :value-fn count
+                                :operator <=})
+
+   :minProperties (mk-bound-fn {:type-filter-fn map?
+                                :value-fn count
+                                :operator >=})})
 
 (defn validate* [schema subj ctx]
   (if (map? schema)
     (reduce
      (fn [ctx [key rule]]
-       (if-let [h (get validators key)]
-         (h key rule schema subj ctx)
-         (add-error ctx {:desc "Unknown key " :details key})))
+       (if (contains? (:modifiers validators) key)
+         ctx
+         (if-let [h (get validators key)]
+           (h key rule schema subj ctx)
+           (add-error ctx {:desc "Unknown key " :details key}))))
      ctx
      schema)))
 
@@ -67,6 +72,5 @@
   (let [res (validate* schema subj {:errors []})]
     (if (empty? (:errors res))
       true
-      false
-      #_(:errors res))))
+      false)))
 
