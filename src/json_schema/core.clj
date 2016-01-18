@@ -38,7 +38,7 @@
                             :value-fn string-length
                             :operator <=})
    :minLength (mk-bound-fn {:type-filter-fn string?
-                            :value-fn string-lenght 
+                            :value-fn string-length 
                             :operator >=})
 
    :minimum (mk-bound-fn {:type-filter-fn number?
