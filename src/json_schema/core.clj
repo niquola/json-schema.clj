@@ -38,11 +38,25 @@
 (defn check-type [_ tp schema subj ctx]
   (let [validators (if (vector? tp) tp [tp])
         validators-fns (map #(get basic-types %) validators)]
-    (println "CHECK tp" validators subj)
     (if (some (fn [v] (v subj)) validators-fns)
       ctx
       (add-error ctx {:expectend (str "type:" tp)
                       :actual subj}))))
+
+(defn check-properties [_ props schema subj ctx]
+  (reduce
+   (fn [ctx [prop-key prop-val]]
+     (if-let [prop-sch (get props prop-key)]
+       (validate* prop-sch prop-val ctx)
+       ctx))
+   ctx
+   subj))
+
+(defn check-enum [_ enum schema subj ctx]
+  (if (some (fn [v] (= v subj)) enum)
+    ctx
+    (add-error ctx {:expectend (str "one of " enum)
+                    :actual subj})))
 
 (def validators
   {:modifiers #{:exclusiveMaximum :exclusiveMinimum} 
@@ -76,7 +90,9 @@
                                 :value-fn count
                                 :operator >=})
 
-   :type check-type})
+   :type check-type
+   :properties check-properties
+   :enum check-enum})
 
 (defn validate* [schema subj ctx]
   (if (map? schema)
