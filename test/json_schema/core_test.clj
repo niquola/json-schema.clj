@@ -7,18 +7,20 @@
 
 (defn filter-by-name [nm] (fn [fl] (re-matches nm (.getPath fl))))
 
+
+(def re-filter #"^.*(max|min|type).*")
+
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"
                           io/resource
                           io/file
                           file-seq
-                          (filter (filter-by-name #"^.*(max|min).*")))]
+                          (filter (filter-by-name re-filter)))]
     (when (.isFile test-file)
       (let [test-case (json/parse-string (slurp (.getPath test-file)) keyword)]
         (doseq [scenario test-case]
           (testing (:description scenario)
             (doseq [test-item (:tests scenario)]
-              (println (:valid test-item))
               (is (= (:valid test-item)
                      (validate (:schema scenario) (:data test-item)))
                   (pr-str (assoc test-item :schema (:schema scenario)))))))))))

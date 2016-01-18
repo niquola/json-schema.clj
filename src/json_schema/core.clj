@@ -24,6 +24,26 @@
 
 (defn string-length [x] (.count (.codePoints x)))
 
+
+(def basic-types
+  {"object" map?
+   "array" #(or (seq? %) (and (coll? %) (not (map? %))))
+   "string" string?
+   "number" number?
+   "integer" integer?
+   "boolean" #(instance? Boolean %)
+   "null" nil?
+   "any" (constantly true)})
+
+(defn check-type [_ tp schema subj ctx]
+  (let [validators (if (vector? tp) tp [tp])
+        validators-fns (map #(get basic-types %) validators)]
+    (println "CHECK tp" validators subj)
+    (if (some (fn [v] (v subj)) validators-fns)
+      ctx
+      (add-error ctx {:expectend (str "type:" tp)
+                      :actual subj}))))
+
 (def validators
   {:modifiers #{:exclusiveMaximum :exclusiveMinimum} 
 
@@ -54,7 +74,9 @@
 
    :minProperties (mk-bound-fn {:type-filter-fn map?
                                 :value-fn count
-                                :operator >=})})
+                                :operator >=})
+
+   :type check-type})
 
 (defn validate* [schema subj ctx]
   (if (map? schema)
