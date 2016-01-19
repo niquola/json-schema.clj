@@ -1,5 +1,6 @@
 (ns json-schema.core
   (:require [clojure.set :as cset]
+            [cheshire.core :as json]
             [clojure.string :as str]))
 
 (declare validate)
@@ -7,6 +8,9 @@
 
 (defn add-error [ctx err]
   (update-in ctx [:errors] conj err))
+
+(defn add-warn [ctx err]
+  (update-in ctx [:warnings] conj err))
 
 (defn mk-bound-fn [{type-filter-fn :type-filter-fn
                     value-fn :value-fn
@@ -205,11 +209,17 @@
       (add-error ctx {:expected "all unique"
                       :actual (str subj)}))))
 
+(defn decode-json-pointer [x]
+  (-> x
+      (str/replace #"~0" "~")
+      (str/replace #"~1" "/")
+      (str/replace #"%25" "%")))
+
 (defn ref-to-path [ref]
   (mapv (fn [x]
          (if (re-matches #"\d+" x)
            (read-string x)
-           (keyword x)))
+           (keyword (decode-json-pointer x))))
        (rest (str/split (.substring ref 1) #"/"))))
 
 
@@ -236,19 +246,38 @@
           (recur new-ref (conj visited ref)))
         false))))
 
+(defn remote-ref? [ref]
+  (re-matches #"^https?://.*$" ref))
+
+(defn default-resolve-ref [ref]
+  (when-let [res (slurp ref)]
+    (json/parse-string res keyword)))
+
+(defn resolve-remote-ref [ref ctx]
+  (if-let [f (:resolve-ref-fn ctx)]
+    (or (f ref) (default-resolve-ref ref))
+    (default-resolve-ref ref)))
+
+
 (defn check-ref [_ ref _ subj ctx]
-  (println "REF:" ref)
-  (if (cycle-refs? (:resolution-scope ctx) ref)
-    (add-error ctx {:details (str "cycle refs" ref)})
-    (if-let [schema (resolve-ref (:resolution-scope ctx) ref)]
-      (do (println "RESOLVED INTO " schema)
-          (validate* schema subj ctx))
-      (add-error ctx {:expected (str "ref " ref)
-                      :actual (str "not resolved")}))))
+  (println "REF:" ref (ref-to-path ref))
+  (if (remote-ref? ref)
+    (if-let [schema (resolve-remote-ref ref ctx)]
+      (validate schema subj ctx)
+      (add-error ctx {:details (str "could not resolve ref " ref)}))
+    (if (cycle-refs? (:resolution-scope ctx) ref)
+      (add-error ctx {:details (str "cycle refs" ref)})
+      (if-let [schema (resolve-ref (:resolution-scope ctx) ref)]
+        (do (println "RESOLVED INTO " schema)
+            (validate* schema subj ctx))
+        (add-error ctx {:expected (str "ref " ref)
+                        :actual (str "not resolved")})))))
 
 ;; todo should be atom
 (def validators
   {:modifiers #{:exclusiveMaximum
+                :definitions
+                :id
                 :exclusiveMinimum}
 
    :type check-type
@@ -318,19 +347,20 @@
   (if (map? schema)
     (reduce
      (fn [ctx [key rule]]
-       (if (contains? (:modifiers validators) key)
-         ctx
-         (if-let [h (get validators key)]
-           (h key rule schema subj ctx)
-           (add-error ctx {:desc "Unknown schema keyword" :details key}))))
+       (if-let [h (get validators key)]
+         (h key rule schema subj ctx)
+         (if (contains? (:modifiers validators) key)
+           ctx
+           (add-warn ctx {:desc "Unknown schema keyword" :details key}))))
      ctx
      schema)))
 
-(defn check [schema subj]
-  (validate* schema subj {:errors [] :warnings [] :resolution-scope schema}))
+(defn check [schema subj & [ctx]]
+  (validate* schema subj (merge (or ctx {})
+                                {:errors [] :warnings [] :resolution-scope schema})))
 
-(defn validate [schema subj]
-  (let [res (check schema subj)]
+(defn validate [schema subj & [ctx]]
+  (let [res (check schema subj ctx)]
     (if (empty? (:errors res))
       true
       false)))
