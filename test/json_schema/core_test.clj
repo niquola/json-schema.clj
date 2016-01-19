@@ -8,7 +8,8 @@
 (defn filter-by-name [nm] (fn [fl] (re-matches nm (.getPath fl))))
 
 
-(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one).*")
+(def re-filter #"^.*$")
+(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one|any|all|uniq|depend).*")
 
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"

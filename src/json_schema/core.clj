@@ -69,14 +69,69 @@
   (if-not (map? subj)
     ctx
     (reduce (fn [ctx required-key]
-              (if (get subj (keyword required-key))
+              (if (contains? subj (keyword required-key))
                 ctx
                 (add-error ctx {:expectend (str "field " required-key " is required")
                                 :actual subj})))
             ctx requireds)))
 
+(defn- collect-missing-keys [subj requered-keys]
+  (reduce (fn [missing-keys key]
+            (if (contains? subj (keyword key))
+              missing-keys
+              (conj missing-keys key)))
+          [] requered-keys))
+
+(defn- check-dependencies-array [deps-sch subj ctx]
+  (let [missing-keys (collect-missing-keys subj deps-sch)]
+    (if (empty? missing-keys)
+      ctx
+      (add-error ctx {:expected (str "keys present " deps-sch)
+                      :actual (str missing-keys " are missed")}))))
+
+(defn- check-dependencies-object [deps-key deps-sch subj ctx]
+  (if (contains? subj deps-key) 
+    (validate* deps-sch subj ctx)
+    ctx))
+
+(defn check-dependencies
+  "
+  5.4.5.    dependencies
+  5.4.5.1.  Valid values
+
+  This keyword's value MUST be an object. Each value of this object MUST be either an object or an array.
+  If the value is an object, it MUST be a valid JSON Schema. This is called a schema dependency.
+  If the value is an array, it MUST have at least one element. Each element MUST be a string, and
+  elements in the array MUST be unique. This is called a property dependency.
+
+  TOC 5.4.5.2.  Conditions for successful validation
+
+  TOC 5.4.5.2.1.  Schema dependencies
+  For all (name, schema) pair of schema dependencies, if the instance has a property by this name,
+  then it must also validate successfully against the schema.
+  Note that this is the instance itself which must validate successfully,
+  not the value associated with the property name.
+
+
+  TOC 5.4.5.2.2.  Property dependencies
+  For each (name, propertyset) pair of property dependencies,
+  if the instance has a property by this name,
+  then it must also have properties with the same names as propertyset.
+  "
+  [_ deps schema subj ctx]
+  (if-not (map? subj)
+    ctx
+    (reduce (fn [ctx [deps-key deps-sch]]
+              (if-not (contains? subj (keyword deps-key))
+                ctx
+                (if (vector? deps-sch)
+                  (check-dependencies-array deps-sch subj ctx)
+                  (check-dependencies-object deps-key deps-sch subj ctx))))
+            ctx
+            deps)))
+
 (defn additionalProperties [_ allowed? schema subj ctx]
-  (if allowed?
+  (if (or allowed? (not (map? subj)))
     ctx
     (if (cset/subset? (set (keys subj)) (set (keys (:properties schema))))
       ctx
@@ -128,6 +183,27 @@
                       :actual (str checked-cnt "valid")
                       :details  subj}))))
 
+(defn check-any-of [_ schemas _ subj ctx]
+  (if (some #(validate % subj) schemas) 
+    ctx
+    (add-error ctx {:expected (str "any of " schemas)
+                    :actual "none of valid"
+                    :details  subj})))
+
+(defn check-all-of [_ schemas _ subj ctx]
+  (reduce
+   (fn [ctx sch] (validate* sch subj ctx))
+   ctx schemas))
+
+(defn check-uniq-items [_ unique? _ subj ctx]
+  (if-not (vector? subj)
+    ctx
+    (if (= (count subj)
+           (count (set subj)))
+      ctx
+      (add-error ctx {:expected "all unique"
+                      :actual (str subj)}))))
+
 ;; todo should be atom
 (def validators
   {:modifiers #{:exclusiveMaximum
@@ -136,17 +212,26 @@
    :type check-type
 
    :not check-not
+
    :oneOf check-one-of
+
+   :anyOf check-any-of
+
+   :allOf check-all-of
 
    :properties check-properties
 
    :required check-required
+
+   :dependencies check-dependencies
 
    :patternProperties patternProperties
 
    :additionalProperties additionalProperties
 
    :items check-items
+
+   :uniqueItems check-uniq-items
 
    :maxItems (mk-bound-fn {:type-filter-fn vector?
                            :value-fn count
