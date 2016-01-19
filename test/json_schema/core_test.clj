@@ -9,7 +9,7 @@
 
 
 (def re-filter #"^.*$")
-(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one|any|all|uniq|depend).*")
+(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one|any|all|uniq|depend|ref).*")
 
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"
@@ -42,3 +42,4 @@
                    (validate (:schema scenario) (:data test-item)))
                 (pr-str (assoc test-item :schema (:schema scenario)))))))))
   )
+

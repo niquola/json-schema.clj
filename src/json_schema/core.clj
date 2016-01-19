@@ -1,5 +1,6 @@
 (ns json-schema.core
-  (:require [clojure.set :as cset]))
+  (:require [clojure.set :as cset]
+            [clojure.string :as str]))
 
 (declare validate)
 (declare validate*)
@@ -204,6 +205,47 @@
       (add-error ctx {:expected "all unique"
                       :actual (str subj)}))))
 
+(defn ref-to-path [ref]
+  (mapv (fn [x]
+         (if (re-matches #"\d+" x)
+           (read-string x)
+           (keyword x)))
+       (rest (str/split (.substring ref 1) #"/"))))
+
+
+(defn resolve-ref [scope ref]
+  (when (string? ref)
+    (when-let [path (cond
+                     (.startsWith ref "#") (ref-to-path ref)
+                     ;; dirty
+                     (.contains ref "#")   (ref-to-path (str "#" (second (str/split ref #"#" 2))))
+                     :else nil)]
+     (get-in scope path))))
+
+(comment
+  (ref-to-path "#/a/b/0/c")
+  (ref-to-path "#/aka/b/0/c")
+  (resolve-ref {:a {:b [{:c 1}]}} "#/a/b/0/c"))
+
+(defn cycle-refs? [scope ref]
+  (loop [ref ref visited #{}]
+    (let [new-ref (resolve-ref scope ref)]
+      (if (:$ref new-ref)
+        (if (contains? visited ref)
+          true
+          (recur new-ref (conj visited ref)))
+        false))))
+
+(defn check-ref [_ ref _ subj ctx]
+  (println "REF:" ref)
+  (if (cycle-refs? (:resolution-scope ctx) ref)
+    (add-error ctx {:details (str "cycle refs" ref)})
+    (if-let [schema (resolve-ref (:resolution-scope ctx) ref)]
+      (do (println "RESOLVED INTO " schema)
+          (validate* schema subj ctx))
+      (add-error ctx {:expected (str "ref " ref)
+                      :actual (str "not resolved")}))))
+
 ;; todo should be atom
 (def validators
   {:modifiers #{:exclusiveMaximum
@@ -230,6 +272,8 @@
    :additionalProperties additionalProperties
 
    :items check-items
+
+   :$ref check-ref
 
    :uniqueItems check-uniq-items
 
@@ -265,6 +309,11 @@
 
    :enum check-enum})
 
+(defn push-to-parent-scopes [schema parent-scopes]
+  (if (and (:id schema) (not= schema (last parent-scopes)))
+    (conj parent-scopes schema)
+    parent-scopes))
+
 (defn validate* [schema subj ctx]
   (if (map? schema)
     (reduce
@@ -278,7 +327,7 @@
      schema)))
 
 (defn check [schema subj]
-  (validate* schema subj {:errors [] :warnings []}))
+  (validate* schema subj {:errors [] :warnings [] :resolution-scope schema}))
 
 (defn validate [schema subj]
   (let [res (check schema subj)]
