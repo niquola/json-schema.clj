@@ -8,7 +8,7 @@
 (defn filter-by-name [nm] (fn [fl] (re-matches nm (.getPath fl))))
 
 
-(def re-filter #"^.*(max|min|type|properties).*") ;; enum
+(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one).*")
 
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"
@@ -23,4 +23,21 @@
             (doseq [test-item (:tests scenario)]
               (is (= (:valid test-item)
                      (validate (:schema scenario) (:data test-item)))
-                  (pr-str (assoc test-item :schema (:schema scenario)))))))))))
+                  (pr-str
+                   (check  (:schema scenario) (:data test-item))
+                   (assoc test-item :schema (:schema scenario)))))))))))
+
+(comment
+  (doseq [test-file  (->> "draft4"
+                          io/resource
+                          io/file
+                          file-seq
+                          (filter (filter-by-name re-filter)))]
+    (when (.isFile test-file)
+      (let [test-case (json/parse-string (slurp (.getPath test-file)) keyword)]
+        (doseq [scenario test-case]
+          (doseq [test-item (:tests scenario)]
+            (is (= (:valid test-item)
+                   (validate (:schema scenario) (:data test-item)))
+                (pr-str (assoc test-item :schema (:schema scenario)))))))))
+  )
