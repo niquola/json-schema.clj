@@ -28,6 +28,23 @@
                           :actual value 
                           :expected (str  key " then " rule)}))))))
 
+(defn check-multiple-of [_ divider _ subj ctx]
+  (if-not (number? subj)
+    ctx
+    (let [res (/ subj divider)]
+      (if (re-matches #"^\d+(\.0)?$" (str res))
+        ctx
+        (add-error ctx {:expected (str  subj "/" divider)
+                        :actual (str res)})))))
+
+(defn check-pattern [_ pat _ subj ctx]
+  (if-not (string? subj)
+    ctx
+    (if (re-find (re-pattern pat) subj)
+      ctx
+      (add-error ctx {:expected (str "matches: " pat)
+                      :actual subj}))))
+
 
 (defn skip [key rule schema subj ctx] ctx)
 
@@ -282,6 +299,8 @@
 
    :type check-type
 
+   :pattern check-pattern
+
    :not check-not
 
    :oneOf check-one-of
@@ -326,6 +345,8 @@
    :maximum (mk-bound-fn {:type-filter-fn number?
                           :value-fn identity
                           :operator-fn (fn [_ _ schema & _] (if (:exclusiveMaximum schema) < <=))})
+
+   :multipleOf check-multiple-of
 
    :maxProperties (mk-bound-fn {:type-filter-fn map?
                                 :value-fn count

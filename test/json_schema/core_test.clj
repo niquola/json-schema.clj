@@ -19,8 +19,6 @@
                            "http://localhost:1234/subSchemas.json#/integer" {:type "integer"}}
                           url))})
 
-(slurp "http://json-schema.org/draft-04/schema#")
-
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"
                           io/resource
