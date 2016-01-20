@@ -11,6 +11,10 @@
   (merge (or ctx {}) {:errors [] :warnings [] :current-schema schema}))
 
 (defn add-error [ctx err] (update-in ctx [:errors] conj err))
+
+(defn add-error-on [ctx pred opts]
+  (if-not pred (add-error ctx opts) ctx))
+
 (defn add-warn  [ctx err] (update-in ctx [:warnings] conj err))
 
 (defn mk-bound-fn [{type-filter :type-filter
@@ -22,26 +26,27 @@
    :validator (fn [key rule schema subj ctx]
                 (let [op (or operator (operator-fn key rule schema subj ctx))
                       value (value-fn subj)]
-                  (if (op value rule)
-                    ctx
-                    (add-error ctx {:desc key 
-                                    :actual value 
-                                    :expected (str  key " then " rule)}))))})
+                  (add-error-on
+                   ctx
+                   (op value rule)
+                   {:desc key 
+                    :actual value 
+                    :expected (str  key " then " rule)})))})
 
 (defn check-multiple-of [_ divider _ subj ctx]
-  (if-not (number? subj)
-    ctx
-    (let [res (/ subj divider)]
-      (if (re-matches #"^\d+(\.0)?$" (str res))
-        ctx
-        (add-error ctx {:expected (str  subj "/" divider)
-                        :actual (str res)})))))
+  (let [res (/ subj divider)]
+    (add-error-on
+     ctx
+     (re-matches #"^\d+(\.0)?$" (str res))
+     {:expected (str  subj "/" divider)
+      :actual (str res)})))
 
 (defn check-pattern [_ pat _ subj ctx]
-  (if (re-find (re-pattern pat) subj)
-    ctx
-    (add-error ctx {:expected (str "matches: " pat)
-                    :actual subj})))
+  (add-error-on
+   ctx
+   (re-find (re-pattern pat) subj)
+   {:expected (str "matches: " pat)
+    :actual subj}))
 
 
 (defn string-utf8-length [x] (.count (.codePoints x)))
@@ -61,34 +66,34 @@
 (defn check-type [_ tp _ subj ctx]
   (let [validators (if (vector? tp) tp [tp])
         validators-fns (map #(get basic-types %) validators)]
-    (if (some (fn [v] (v subj)) validators-fns)
-      ctx
-      (add-error ctx {:expectend (str "type:" tp)
-                      :actual subj}))))
+    (add-error-on
+     ctx
+     (some (fn [v] (v subj)) validators-fns)
+     {:expectend (str "type:" tp)
+      :actual subj})))
 
 (defn check-properties [_ props schema subj ctx]
-  (if-not (map? subj)
-    ctx
-    (reduce
-     (fn [ctx [prop-key prop-val]]
-       (if-let [prop-sch (get props prop-key)]
-         (validate* prop-sch prop-val ctx)
-         ctx))
-     ctx
-     subj)))
+  (reduce
+   (fn [ctx [prop-key prop-val]]
+     (if-let [prop-sch (get props prop-key)]
+       (validate* prop-sch prop-val ctx)
+       ctx))
+   ctx subj))
 
 (defn check-enum [_ enum schema subj ctx]
-  (if (some (fn [v] (= v subj)) enum)
-    ctx
-    (add-error ctx {:expectend (str "one of " enum)
-                    :actual subj})))
+  (add-error-on
+   ctx
+   (some (fn [v] (= v subj)) enum)
+   {:expectend (str "one of " enum)
+    :actual subj}))
 
 (defn check-required [_ requireds schema subj ctx]
   (reduce (fn [ctx required-key]
-            (if (contains? subj (keyword required-key))
-              ctx
-              (add-error ctx {:expectend (str "field " required-key " is required")
-                              :actual subj})))
+            (add-error-on
+             ctx
+             (contains? subj (keyword required-key))
+             {:expectend (str "field " required-key " is required")
+              :actual subj}))
           ctx requireds))
 
 (defn- collect-missing-keys [subj requered-keys]
@@ -100,15 +105,13 @@
 
 (defn- check-dependencies-array [deps-sch subj ctx]
   (let [missing-keys (collect-missing-keys subj deps-sch)]
-    (if (empty? missing-keys)
-      ctx
-      (add-error ctx {:expected (str "keys present " deps-sch)
-                      :actual (str missing-keys " are missed")}))))
+    (add-error-on ctx
+     (empty? missing-keys)
+     {:expected (str "keys present " deps-sch)
+      :actual (str missing-keys " are missed")})))
 
 (defn- check-dependencies-object [deps-key deps-sch subj ctx]
-  (if (contains? subj deps-key) 
-    (validate* deps-sch subj ctx)
-    ctx))
+  (if (contains? subj deps-key) (validate* deps-sch subj ctx) ctx))
 
 (defn check-dependencies
   [_ deps schema subj ctx]
@@ -132,13 +135,13 @@
           additional  (->> (set/difference s p)
                            (remove (fn [x] (some #(re-find % (name x))  pp))))]
       (cond
-        (= a-prop false) (if (empty? additional)
-                           ctx
-                           (add-error ctx {:expected (str "one of " s)
-                                           :actual (str "extra props: " additional)}))
-        (map? a-prop) (reduce (fn [ctx p-key]
-                                (validate* a-prop (get subj p-key) ctx))
-                              ctx additional)))))
+        (= a-prop false) (add-error-on ctx
+                          (empty? additional)
+                          {:expected (str "one of " s)
+                           :actual (str "extra props: " additional)})
+        (map? a-prop)    (reduce (fn [ctx p-key]
+                                   (validate* a-prop (get subj p-key) ctx))
+                                 ctx additional)))))
 
 
 (defn check-pattern-properites [_ props schema subj ctx]
@@ -166,43 +169,43 @@
               (validate* item-schema value ctx))
             ctx subj)))
 
-
 (defn check-not [_ not-schema schema subj ctx]
-  (if-not (validate not-schema subj)
-    ctx
-    (add-error ctx {:expected (str "not " (pr-str not-schema))
-                    :details  subj
-                    :actual   "valid"})))
+  (add-error-on
+   ctx (not (validate not-schema subj))
+   {:expected (str "not " (pr-str not-schema))
+    :details  subj
+    :actual   "valid"}))
 
 (defn check-one-of [_ schemas _ subj ctx]
   (let [checked-cnt (reduce (fn [acc sch]
                               (if (validate sch subj) (inc acc) acc))
                             0 schemas)]
-    (if (= 1 checked-cnt)
-      ctx
-      (add-error ctx {:expected (str "one of " schemas)
-                      :actual (str checked-cnt "valid")
-                      :details  subj}))))
+    (add-error-on ctx
+     (= 1 checked-cnt)
+     {:expected (str "one of " schemas)
+      :actual (str checked-cnt "valid")
+      :details  subj})))
 
 (defn check-any-of [_ schemas _ subj ctx]
   (let [results (map #(:errors (validate* % subj ctx)) schemas)]
-    (if (some #(empty? %) results)
-      ctx
-      (add-error ctx {:expected (str "any of " schemas)
-                      :actual (pr-str results) 
-                      :details  subj}))))
+    (add-error-on ctx
+     (some #(empty? %) results)
+     {:expected (str "any of " schemas)
+      :actual (pr-str results) 
+      :details  subj})))
 
 (defn check-all-of [_ schemas _ subj ctx]
-  (reduce
-   (fn [ctx sch] (validate* sch subj ctx))
-   ctx schemas))
+  (reduce (fn [ctx sch] (validate* sch subj ctx)) ctx schemas))
 
 (defn check-uniq-items [_ unique? _ subj ctx]
-  (if (= (count subj)
-         (count (set subj)))
-    ctx
-    (add-error ctx {:expected "all unique"
-                    :actual (str subj)})))
+  (add-error-on
+   ctx
+   (= (count subj) (count (set subj)))
+   {:expected "all unique"
+    :actual (str subj)}))
+
+
+;; refs
 
 (defn decode-json-pointer [x]
   (-> x
@@ -297,10 +300,10 @@
 
 (defn check-format [key fmt _ subj ctx]
   (if-let [re (get format-regexps fmt)]
-    (if (re-matches re subj)
-      ctx
-      (add-error ctx {:key key
-                      :expected (str subj  " matches " re)}))
+    (add-error-on
+     ctx (re-matches re subj)
+     {:key key
+      :expected (str subj  " matches " re)})
     (add-error ctx {:key key
                     :details (str "Not known format" fmt)})))
 
@@ -413,6 +416,4 @@
   (validate* schema subj (new-context ctx schema)))
 
 (defn validate [schema subj & [ctx]]
-  (-> (check schema subj ctx)
-      :errors
-      (empty?)))
+  (-> (check schema subj ctx) :errors (empty?)))

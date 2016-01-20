@@ -2,11 +2,17 @@
 
 [![Build Status](https://travis-ci.org/niquola/json-schema.clj.svg?branch=master)](https://travis-ci.org/niquola/json-schema.clj)
 
-A Clojure library designed to ... well, that part is up to you.
+Implementation JSON schema in clojure, which passes specs :)
 
 ## Usage
 
-FIXME
+```clj
+(require '[json-schema.core :as sch])
+
+(sch/validate schema instance) ;; return true or false
+(sch/check schema instance) ;; return {:errors [...] :warnings [...]}
+
+```
 
 ## License
 
