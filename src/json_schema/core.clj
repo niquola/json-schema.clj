@@ -165,19 +165,22 @@
                    ) ctx subj)))
      ctx props)))
 
-(defn check-items [_ item-schema schema subj ctx]
+(defn check-items [_ item-schema {additional-items :additionalItems :as schema} subj ctx]
   (if-not (vector? subj)
     ctx
     (if (vector? item-schema)
-      (if (not= (count item-schema) (count subj))
-        (add-error ctx {:expected (str (count item-schema) " items in list")
-                        :actual (count subj)})
-        (reduce (fn [ctx [sch v]]
-                  (validate* sch v ctx))
-                ctx (map vector item-schema subj)))
+      (reduce (fn [ctx [idx v]]
+                (let [sch (or (get item-schema idx) additional-items)]
+                  (cond
+                    (= false sch) (add-error ctx {:desc (str "No additional schema for item " idx) :actual subj})
+                    (map? sch)    (validate* sch v ctx)
+                    :else         ctx)))
+              ctx (map vector (range) subj))
+
       (reduce (fn [ctx value]
                 (validate* item-schema value ctx))
               ctx subj))))
+
 
 (defn check-not [_ not-schema schema subj ctx]
   (if-not (validate not-schema subj)
@@ -197,11 +200,12 @@
                       :details  subj}))))
 
 (defn check-any-of [_ schemas _ subj ctx]
-  (if (some #(validate % subj) schemas) 
-    ctx
-    (add-error ctx {:expected (str "any of " schemas)
-                    :actual "none of valid"
-                    :details  subj})))
+  (let [results (map #(:errors (validate* % subj ctx)) schemas)]
+    (if (some #(empty? %) results)
+      ctx
+      (add-error ctx {:expected (str "any of " schemas)
+                      :actual (pr-str results) 
+                      :details  subj}))))
 
 (defn check-all-of [_ schemas _ subj ctx]
   (reduce
@@ -230,14 +234,18 @@
            (keyword (decode-json-pointer x))))
        (rest (str/split (.substring ref 1) #"/"))))
 
+(defn relative-ref? [url]
+  (and (not (.startsWith url "#"))
+       (not (re-matches #"^https?://.*" url))))
+
+(defn resolve-base-url [base-url url]
+  (when (and base-url url)
+    (str (.resolve (java.net.URI. base-url) url))))
 
 (defn resolve-ref [scope ref]
   (when (string? ref)
-    (when-let [path (cond
-                     (.startsWith ref "#") (ref-to-path ref)
-                     ;; dirty
-                     (.contains ref "#")   (ref-to-path )
-                     :else nil)]
+    (when-let [path (when (.startsWith ref "#") (ref-to-path ref))]
+     (println "RESOLVE SCOPE:" path " in " scope)
      (get-in scope path))))
 
 (comment
@@ -255,7 +263,7 @@
         false))))
 
 (defn remote-ref? [ref]
-  (re-matches #"^https?://.*$" ref))
+  (not (re-matches #"^#.*$" ref)))
 
 (defn default-resolve-ref [ref]
   (when-let [res (slurp ref)]
@@ -263,9 +271,12 @@
     (json/parse-string res keyword)))
 
 (defn resolve-remote-ref [ref ctx]
-  (if-let [f (:resolve-ref-fn ctx)]
-    (or (f ref) (default-resolve-ref ref))
-    (default-resolve-ref ref)))
+  (let [uri (if (relative-ref? ref)
+              (resolve-base-url (:base-url ctx) ref)
+              ref)]
+    (if-let [f (:resolve-ref-fn ctx)]
+      (or (f uri) (default-resolve-ref uri))
+      (default-resolve-ref uri))))
 
 (defn remote-ref-fragment [ref]
   (when-let [hsh (second (str/split ref #"#" 2))]
@@ -276,12 +287,12 @@
   (if (remote-ref? ref)
     (if-let [schema (resolve-remote-ref ref ctx)]
       (if-let [internal-ref (remote-ref-fragment ref)]
-        (validate* internal-ref subj (assoc ctx :resolution-scope schema))
-        (validate* schema subj (assoc ctx :resolution-scope schema)))
+        (validate* internal-ref subj (assoc ctx :current-schema schema))
+        (validate* schema subj (assoc ctx :current-schema schema)))
       (add-error ctx {:details (str "could not resolve ref " ref)}))
-    (if (cycle-refs? (:resolution-scope ctx) ref)
+    (if (cycle-refs? (:current-schema ctx) ref)
       (add-error ctx {:details (str "cycle refs" ref)})
-      (if-let [schema (resolve-ref (:resolution-scope ctx) ref)]
+      (if-let [schema (resolve-ref (:current-schema ctx) ref)]
         (do (println "Resolved to: " schema)
             (validate* schema subj ctx))
         (add-error ctx {:expected (str "ref " ref)
@@ -381,21 +392,28 @@
     (conj parent-scopes schema)
     parent-scopes))
 
+
 (defn validate* [schema subj ctx]
-  (if (map? schema)
-    (reduce
-     (fn [ctx [key rule]]
-       (if-let [h (get validators key)]
-         (h key rule schema subj ctx)
-         (if (contains? (:modifiers validators) key)
-           ctx
-           (add-warn ctx {:desc "Unknown schema keyword" :details key}))))
-     ctx
-     schema)))
+  (let [ctx (if (:id schema)
+              (update-in ctx [:base-url]
+                         (fn [base-url] (resolve-base-url base-url (:id schema))))
+              ctx)]
+      (if (map? schema)
+        (reduce
+         (fn [ctx [key rule]]
+           (if-let [h (get validators key)]
+             (h key rule schema subj ctx)
+             (if (contains? (:modifiers validators) key)
+               ctx
+               (add-warn ctx {:desc "Unknown schema keyword" :details key}))))
+         ctx
+         schema))))
 
 (defn check [schema subj & [ctx]]
-  (validate* schema subj (merge (or ctx {})
-                                {:errors [] :warnings [] :resolution-scope schema})))
+  (validate* schema subj (merge (or ctx {:base-url (:id schema)})
+                                {:errors []
+                                 :warnings []
+                                 :current-schema schema})))
 
 (defn validate [schema subj & [ctx]]
   (let [res (check schema subj ctx)]
