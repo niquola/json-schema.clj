@@ -1,6 +1,7 @@
 (ns json-schema.core
-  (:require [clojure.set :as cset]
-            [cheshire.core :as json]
+  (:require [cheshire.core :as json]
+            [clojure.set :as cset]
+            [clojure.set :as set]
             [clojure.string :as str]))
 
 (declare validate)
@@ -117,29 +118,6 @@
     ctx))
 
 (defn check-dependencies
-  "
-  5.4.5.    dependencies
-  5.4.5.1.  Valid values
-
-  This keyword's value MUST be an object. Each value of this object MUST be either an object or an array.
-  If the value is an object, it MUST be a valid JSON Schema. This is called a schema dependency.
-  If the value is an array, it MUST have at least one element. Each element MUST be a string, and
-  elements in the array MUST be unique. This is called a property dependency.
-
-  TOC 5.4.5.2.  Conditions for successful validation
-
-  TOC 5.4.5.2.1.  Schema dependencies
-  For all (name, schema) pair of schema dependencies, if the instance has a property by this name,
-  then it must also validate successfully against the schema.
-  Note that this is the instance itself which must validate successfully,
-  not the value associated with the property name.
-
-
-  TOC 5.4.5.2.2.  Property dependencies
-  For each (name, propertyset) pair of property dependencies,
-  if the instance has a property by this name,
-  then it must also have properties with the same names as propertyset.
-  "
   [_ deps schema subj ctx]
   (if-not (map? subj)
     ctx
@@ -152,13 +130,26 @@
             ctx
             deps)))
 
-(defn additionalProperties [_ allowed? schema subj ctx]
-  (if (or allowed? (not (map? subj)))
+
+(defn additionalProperties [_ a-prop schema subj ctx]
+  (if-not (map? subj)
     ctx
-    (if (cset/subset? (set (keys subj)) (set (keys (:properties schema))))
-      ctx
-      (add-error ctx {:expected (str "one of " (keys (:properties schema)))
-                      :actual (cset/difference (set (keys subj)) (set (keys (:properties schema))))}))))
+    (if (= a-prop true)
+        ctx
+        (let [s   (set (keys subj)) 
+              p   (set (keys (:properties schema)))
+              pp  (map (fn [re] (re-pattern (name re)))
+                       (keys (:patternProperties schema)))
+              additional  (->> (set/difference s p)
+                               (remove (fn [x] (some #(re-find % (name x))  pp))))]
+          (cond
+            (= a-prop false) (if (empty? additional)
+                               ctx
+                               (add-error ctx {:expected (str "one of " s)
+                                               :actual (str "extra props: " additional)}))
+            (map? a-prop) (reduce (fn [ctx p-key]
+                                    (validate* a-prop (get subj p-key) ctx))
+                                  ctx additional))))))
 
 
 (defn patternProperties [_ props schema subj ctx]
@@ -245,7 +236,7 @@
     (when-let [path (cond
                      (.startsWith ref "#") (ref-to-path ref)
                      ;; dirty
-                     (.contains ref "#")   (ref-to-path (str "#" (second (str/split ref #"#" 2))))
+                     (.contains ref "#")   (ref-to-path )
                      :else nil)]
      (get-in scope path))))
 
@@ -268,6 +259,7 @@
 
 (defn default-resolve-ref [ref]
   (when-let [res (slurp ref)]
+    (println "Loaded: " res)
     (json/parse-string res keyword)))
 
 (defn resolve-remote-ref [ref ctx]
@@ -275,20 +267,43 @@
     (or (f ref) (default-resolve-ref ref))
     (default-resolve-ref ref)))
 
+(defn remote-ref-fragment [ref]
+  (when-let [hsh (second (str/split ref #"#" 2))]
+    {:$ref (str "#" hsh)}))
 
 (defn check-ref [_ ref _ subj ctx]
-  (println "REF:" ref (ref-to-path ref))
+  (println "Ref:" ref)
   (if (remote-ref? ref)
     (if-let [schema (resolve-remote-ref ref ctx)]
-      (validate schema subj ctx)
+      (if-let [internal-ref (remote-ref-fragment ref)]
+        (validate* internal-ref subj (assoc ctx :resolution-scope schema))
+        (validate* schema subj (assoc ctx :resolution-scope schema)))
       (add-error ctx {:details (str "could not resolve ref " ref)}))
     (if (cycle-refs? (:resolution-scope ctx) ref)
       (add-error ctx {:details (str "cycle refs" ref)})
       (if-let [schema (resolve-ref (:resolution-scope ctx) ref)]
-        (do (println "RESOLVED INTO " schema)
+        (do (println "Resolved to: " schema)
             (validate* schema subj ctx))
         (add-error ctx {:expected (str "ref " ref)
                         :actual (str "not resolved")})))))
+
+
+(def format-re
+  {"date-time" #"(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))"
+   "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
+   "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
+   "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+   "ipv6"      #"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
+   "uri"       #"^((https?|ftp|file):)?//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"})
+
+(defn check-format [_ fmt _ subj ctx]
+  (if-not (string? subj)
+    ctx
+    (if-let [re (get format-re fmt)]
+      (if (re-matches re subj)
+        ctx
+        (add-error ctx {:expected (str subj  " matches " re)}))
+      (add-error ctx {:details (str "Not known format" fmt)}))))
 
 ;; todo should be atom
 (def validators
@@ -345,6 +360,8 @@
    :maximum (mk-bound-fn {:type-filter-fn number?
                           :value-fn identity
                           :operator-fn (fn [_ _ schema & _] (if (:exclusiveMaximum schema) < <=))})
+
+   :format check-format
 
    :multipleOf check-multiple-of
 

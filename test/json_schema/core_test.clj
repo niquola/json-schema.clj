@@ -3,21 +3,36 @@
             [clojure.java.io :as io]
             [clojure.test :refer :all]
             [clojure.pprint :as pprint]
+            [org.httpkit.server :as srv]
             [json-schema.core :refer :all]))
-
 
 (defn filter-by-name [nm] (fn [fl] (re-matches nm (.getPath fl))))
 
-
 (def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one|any|all|uniq|depend|ref).*")
+(def re-filter #"^.*ref.*$")
 (def re-filter #"^.*$")
 
-(def settings
-  {:resolve-ref-fn (fn [url]
-                     (get {"http://localhost:1234/integer.json" {:type "integer"}
-                           "http://localhost:1234/subSchemas.json#/refToInteger" {:type "integer"}
-                           "http://localhost:1234/subSchemas.json#/integer" {:type "integer"}}
-                          url))})
+(defn remote-server [req]
+  (let [path (str "JSON-Schema-Test-Suite/remotes" (:uri req))]
+    (if (.exists (io/file path))
+      {:body (slurp path)}
+      {:body (str "not found " path)})))
+
+(def test-server (atom nil))
+
+(defn stop-server []
+  (when-let [srv @test-server]
+    (srv)))
+
+(defn start-server []
+  (stop-server)
+  (reset! test-server
+         (srv/run-server #'remote-server {:port 1234})))
+
+(comment
+  (start-server)
+  (stop-server))
+
 
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"
@@ -31,11 +46,11 @@
           (testing (:description scenario)
             (doseq [test-item (:tests scenario)]
               (is (= (:valid test-item)
-                     (validate (:schema scenario) (:data test-item) settings))
+                     (validate (:schema scenario) (:data test-item)))
                   (str
                    (with-out-str
                      (pprint/pprint
-                      (check  (:schema scenario) (:data test-item) settings)))
+                      (check  (:schema scenario) (:data test-item))))
                    "\n"
                    (with-out-str
                      (pprint/pprint
