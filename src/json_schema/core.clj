@@ -7,24 +7,26 @@
 (declare validate)
 (declare validate*)
 
-(defn add-error [ctx err] (update-in ctx [:errors] conj err))
-(defn add-warn [ctx err] (update-in ctx [:warnings] conj err))
+(defn new-context [ctx schema]
+  (merge (or ctx {}) {:errors [] :warnings [] :current-schema schema}))
 
-(defn mk-bound-fn [{type-filter-fn :type-filter-fn
+(defn add-error [ctx err] (update-in ctx [:errors] conj err))
+(defn add-warn  [ctx err] (update-in ctx [:warnings] conj err))
+
+(defn mk-bound-fn [{type-filter :type-filter
                     value-fn :value-fn
                     operator :operator
                     operator-fn :operator-fn}]
 
-  (fn [key rule schema subj ctx]
-    (if-not (type-filter-fn subj)
-      ctx
-      (let [op (or operator (operator-fn key rule schema subj ctx))
-            value (value-fn subj)]
-        (if (op value rule)
-          ctx
-          (add-error ctx {:desc key 
-                          :actual value 
-                          :expected (str  key " then " rule)}))))))
+  {:type-filter type-filter
+   :validator (fn [key rule schema subj ctx]
+                (let [op (or operator (operator-fn key rule schema subj ctx))
+                      value (value-fn subj)]
+                  (if (op value rule)
+                    ctx
+                    (add-error ctx {:desc key 
+                                    :actual value 
+                                    :expected (str  key " then " rule)}))))})
 
 (defn check-multiple-of [_ divider _ subj ctx]
   (if-not (number? subj)
@@ -36,17 +38,13 @@
                         :actual (str res)})))))
 
 (defn check-pattern [_ pat _ subj ctx]
-  (if-not (string? subj)
+  (if (re-find (re-pattern pat) subj)
     ctx
-    (if (re-find (re-pattern pat) subj)
-      ctx
-      (add-error ctx {:expected (str "matches: " pat)
-                      :actual subj}))))
+    (add-error ctx {:expected (str "matches: " pat)
+                    :actual subj})))
 
 
-(defn skip [key rule schema subj ctx] ctx)
-
-(defn string-length [x] (.count (.codePoints x)))
+(defn string-utf8-length [x] (.count (.codePoints x)))
 
 
 ;; todo should be atom
@@ -86,14 +84,12 @@
                     :actual subj})))
 
 (defn check-required [_ requireds schema subj ctx]
-  (if-not (map? subj)
-    ctx
-    (reduce (fn [ctx required-key]
-              (if (contains? subj (keyword required-key))
-                ctx
-                (add-error ctx {:expectend (str "field " required-key " is required")
-                                :actual subj})))
-            ctx requireds)))
+  (reduce (fn [ctx required-key]
+            (if (contains? subj (keyword required-key))
+              ctx
+              (add-error ctx {:expectend (str "field " required-key " is required")
+                              :actual subj})))
+          ctx requireds))
 
 (defn- collect-missing-keys [subj requered-keys]
   (reduce (fn [missing-keys key]
@@ -116,67 +112,59 @@
 
 (defn check-dependencies
   [_ deps schema subj ctx]
-  (if-not (map? subj)
+  (reduce (fn [ctx [deps-key deps-sch]]
+            (if-not (contains? subj (keyword deps-key))
+              ctx
+              (if (vector? deps-sch)
+                (check-dependencies-array deps-sch subj ctx)
+                (check-dependencies-object deps-key deps-sch subj ctx))))
+          ctx
+          deps))
+
+
+(defn check-additional-properites [_ a-prop schema subj ctx]
+  (if (= a-prop true)
     ctx
-    (reduce (fn [ctx [deps-key deps-sch]]
-              (if-not (contains? subj (keyword deps-key))
-                ctx
-                (if (vector? deps-sch)
-                  (check-dependencies-array deps-sch subj ctx)
-                  (check-dependencies-object deps-key deps-sch subj ctx))))
-            ctx
-            deps)))
+    (let [s   (set (keys subj)) 
+          p   (set (keys (:properties schema)))
+          pp  (map (fn [re] (re-pattern (name re)))
+                   (keys (:patternProperties schema)))
+          additional  (->> (set/difference s p)
+                           (remove (fn [x] (some #(re-find % (name x))  pp))))]
+      (cond
+        (= a-prop false) (if (empty? additional)
+                           ctx
+                           (add-error ctx {:expected (str "one of " s)
+                                           :actual (str "extra props: " additional)}))
+        (map? a-prop) (reduce (fn [ctx p-key]
+                                (validate* a-prop (get subj p-key) ctx))
+                              ctx additional)))))
 
 
-(defn additionalProperties [_ a-prop schema subj ctx]
-  (if-not (map? subj)
-    ctx
-    (if (= a-prop true)
-        ctx
-        (let [s   (set (keys subj)) 
-              p   (set (keys (:properties schema)))
-              pp  (map (fn [re] (re-pattern (name re)))
-                       (keys (:patternProperties schema)))
-              additional  (->> (set/difference s p)
-                               (remove (fn [x] (some #(re-find % (name x))  pp))))]
-          (cond
-            (= a-prop false) (if (empty? additional)
-                               ctx
-                               (add-error ctx {:expected (str "one of " s)
-                                               :actual (str "extra props: " additional)}))
-            (map? a-prop) (reduce (fn [ctx p-key]
-                                    (validate* a-prop (get subj p-key) ctx))
-                                  ctx additional))))))
-
-
-(defn patternProperties [_ props schema subj ctx]
-  (if-not (map? subj)
-    ctx
-    (reduce
-     (fn [ctx [pat sch]]
-       (let [re-pat (re-pattern (name pat))]
-         (reduce (fn [ctx [k v]]
-                   (if (re-find re-pat (name k))
-                     (validate* sch v ctx)
-                     ctx)
-                   ) ctx subj)))
-     ctx props)))
+(defn check-pattern-properites [_ props schema subj ctx]
+  (reduce
+   (fn [ctx [pat sch]]
+     (let [re-pat (re-pattern (name pat))]
+       (reduce (fn [ctx [k v]]
+                 (if (re-find re-pat (name k))
+                   (validate* sch v ctx)
+                   ctx)
+                 ) ctx subj)))
+   ctx props))
 
 (defn check-items [_ item-schema {additional-items :additionalItems :as schema} subj ctx]
-  (if-not (vector? subj)
-    ctx
-    (if (vector? item-schema)
-      (reduce (fn [ctx [idx v]]
-                (let [sch (or (get item-schema idx) additional-items)]
-                  (cond
-                    (= false sch) (add-error ctx {:desc (str "No additional schema for item " idx) :actual subj})
-                    (map? sch)    (validate* sch v ctx)
-                    :else         ctx)))
-              ctx (map vector (range) subj))
+  (if (vector? item-schema)
+    (reduce (fn [ctx [idx v]]
+              (let [sch (or (get item-schema idx) additional-items)]
+                (cond
+                  (= false sch) (add-error ctx {:desc (str "No additional schema for item " idx) :actual subj})
+                  (map? sch)    (validate* sch v ctx)
+                  :else         ctx)))
+            ctx (map vector (range) subj))
 
-      (reduce (fn [ctx value]
-                (validate* item-schema value ctx))
-              ctx subj))))
+    (reduce (fn [ctx value]
+              (validate* item-schema value ctx))
+            ctx subj)))
 
 
 (defn check-not [_ not-schema schema subj ctx]
@@ -210,13 +198,11 @@
    ctx schemas))
 
 (defn check-uniq-items [_ unique? _ subj ctx]
-  (if-not (vector? subj)
+  (if (= (count subj)
+         (count (set subj)))
     ctx
-    (if (= (count subj)
-           (count (set subj)))
-      ctx
-      (add-error ctx {:expected "all unique"
-                      :actual (str subj)}))))
+    (add-error ctx {:expected "all unique"
+                    :actual (str subj)})))
 
 (defn decode-json-pointer [x]
   (-> x
@@ -236,8 +222,9 @@
        (not (re-matches #"^https?://.*" url))))
 
 (defn resolve-base-url [base-url url]
-  (when (and base-url url)
-    (str (.resolve (java.net.URI. base-url) url))))
+  (cond (nil? base-url) url
+        (nil? url) base-url
+        (and base-url url) (str (.resolve (java.net.URI. base-url) url))))
 
 (defn resolve-ref [scope ref]
   (when (string? ref)
@@ -295,8 +282,12 @@
         (add-error ctx {:expected (str "ref " ref)
                         :actual (str "not resolved")})))))
 
+(defn update-base-url [ctx {id :id :as schema}]
+  (update-in ctx [:base-url] #(resolve-base-url % id)))
 
-(def format-re
+;; end refs
+
+(def format-regexps
   {"date-time" #"(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))"
    "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
    "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
@@ -304,116 +295,124 @@
    "ipv6"      #"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
    "uri"       #"^((https?|ftp|file):)?//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"})
 
-(defn check-format [_ fmt _ subj ctx]
-  (if-not (string? subj)
-    ctx
-    (if-let [re (get format-re fmt)]
-      (if (re-matches re subj)
-        ctx
-        (add-error ctx {:expected (str subj  " matches " re)}))
-      (add-error ctx {:details (str "Not known format" fmt)}))))
+(defn check-format [key fmt _ subj ctx]
+  (if-let [re (get format-regexps fmt)]
+    (if (re-matches re subj)
+      ctx
+      (add-error ctx {:key key
+                      :expected (str subj  " matches " re)}))
+    (add-error ctx {:key key
+                    :details (str "Not known format" fmt)})))
 
 ;; todo should be atom
 (def validators
   {:modifiers #{:exclusiveMaximum
                 :definitions
                 :id
+                :description
                 :exclusiveMinimum}
 
-   :type check-type
+   :type {:validator check-type}
 
-   :pattern check-pattern
+   :not {:validator check-not}
 
-   :not check-not
+   :oneOf {:validator check-one-of}
 
-   :oneOf check-one-of
+   :anyOf {:validator check-any-of}
 
-   :anyOf check-any-of
+   :allOf {:validator check-all-of}
 
-   :allOf check-all-of
+   :properties {:type-filter map?
+                :validator check-properties}
 
-   :properties check-properties
+   :required {:type-filter map?
+              :validator check-required}
 
-   :required check-required
+   :dependencies {:type-filter map?
+                  :validator check-dependencies}
 
-   :dependencies check-dependencies
+   :patternProperties {:type-filter map?
+                       :validator check-pattern-properites}
 
-   :patternProperties patternProperties
+   :additionalProperties {:type-filter map?
+                          :validator check-additional-properites}
 
-   :additionalProperties additionalProperties
-
-   :items check-items
-
-   :$ref check-ref
-
-   :uniqueItems check-uniq-items
-
-   :maxItems (mk-bound-fn {:type-filter-fn vector?
-                           :value-fn count
-                           :operator <=})
-   :minItems (mk-bound-fn {:type-filter-fn vector?
-                           :value-fn count
-                           :operator >=})
-
-   :maxLength (mk-bound-fn {:type-filter-fn string?
-                            :value-fn string-length
-                            :operator <=})
-   :minLength (mk-bound-fn {:type-filter-fn string?
-                            :value-fn string-length 
-                            :operator >=})
-
-   :minimum (mk-bound-fn {:type-filter-fn number?
-                          :value-fn identity
-                          :operator-fn (fn [_ _ schema & _] (if (:exclusiveMinimum schema) > >=))})
-   :maximum (mk-bound-fn {:type-filter-fn number?
-                          :value-fn identity
-                          :operator-fn (fn [_ _ schema & _] (if (:exclusiveMaximum schema) < <=))})
-
-   :format check-format
-
-   :multipleOf check-multiple-of
-
-   :maxProperties (mk-bound-fn {:type-filter-fn map?
+   :maxProperties (mk-bound-fn {:type-filter map?
                                 :value-fn count
                                 :operator <=})
 
-   :minProperties (mk-bound-fn {:type-filter-fn map?
+   :minProperties (mk-bound-fn {:type-filter map?
                                 :value-fn count
                                 :operator >=})
 
+   :$ref {:validator check-ref}
 
-   :enum check-enum})
+   :items {:type-filter vector?
+           :validator check-items}
 
-(defn push-to-parent-scopes [schema parent-scopes]
-  (if (and (:id schema) (not= schema (last parent-scopes)))
-    (conj parent-scopes schema)
-    parent-scopes))
+   :uniqueItems {:type-filter vector?
+                 :validator check-uniq-items}
 
+   :maxItems (mk-bound-fn {:type-filter vector?
+                           :value-fn count
+                           :operator <=})
+   :minItems (mk-bound-fn {:type-filter vector?
+                           :value-fn count
+                           :operator >=})
+
+
+   :pattern {:type-filter string?
+             :validator    check-pattern}
+
+   :format {:type-filter string?
+            :validator check-format}
+
+   :maxLength (mk-bound-fn {:type-filter string?
+                            :value-fn string-utf8-length
+                            :operator <=})
+
+   :minLength (mk-bound-fn {:type-filter string?
+                            :value-fn string-utf8-length
+                            :operator >=})
+
+
+   :minimum (mk-bound-fn {:type-filter number?
+                          :value-fn identity
+                          :operator-fn (fn [_ _ schema & _]
+                                         (if (:exclusiveMinimum schema) > >=))})
+   :maximum (mk-bound-fn {:type-filter number?
+                          :value-fn identity
+                          :operator-fn (fn [_ _ schema & _]
+                                         (if (:exclusiveMaximum schema) < <=))})
+
+   :multipleOf {:type-filter number?
+                :validator check-multiple-of}
+
+   :enum {:validator check-enum}})
+
+
+(defn warn-on-unknown-keys [key ctx]
+  (if (contains? (:modifiers validators) key)
+    ctx
+    (add-warn ctx {:desc "Unknown schema keyword" :details key})))
 
 (defn validate* [schema subj ctx]
-  (let [ctx (if (:id schema)
-              (update-in ctx [:base-url]
-                         (fn [base-url] (resolve-base-url base-url (:id schema))))
-              ctx)]
-      (if (map? schema)
-        (reduce
-         (fn [ctx [key rule]]
-           (if-let [h (get validators key)]
-             (h key rule schema subj ctx)
-             (if (contains? (:modifiers validators) key)
-               ctx
-               (add-warn ctx {:desc "Unknown schema keyword" :details key}))))
-         ctx
-         schema))))
+  {:pre  [(map? schema)]}
+  (let [ctx (update-base-url ctx schema)]
+    (reduce
+     (fn [ctx [key rule]]
+       (if-let [{:keys [type-filter validator]} (get validators key)]
+         (if (or (not type-filter) (and type-filter (type-filter subj)))
+           (validator key rule schema subj ctx)
+           ctx)
+         (warn-on-unknown-keys key ctx)))
+     ctx
+     schema)))
 
 (defn check [schema subj & [ctx]]
-  (validate* schema subj (merge (or ctx {:base-url (:id schema)})
-                                {:errors []
-                                 :warnings []
-                                 :current-schema schema})))
+  (validate* schema subj (new-context ctx schema)))
 
 (defn validate [schema subj & [ctx]]
-  (let [res (check schema subj ctx)]
-    (if (empty? (:errors res))
-      true
-      false)))
+  (-> (check schema subj ctx)
+      :errors
+      (empty?)))

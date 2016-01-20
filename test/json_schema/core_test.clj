@@ -6,11 +6,6 @@
             [org.httpkit.server :as srv]
             [json-schema.core :refer :all]))
 
-(defn filter-by-name [nm] (fn [fl] (re-matches nm (.getPath fl))))
-
-(def re-filter #"^.*(max|min|type|patternProperties|enum|items|not|one|any|all|uniq|depend|ref).*")
-(def re-filter #"^.*ref.*$")
-(def re-filter #"^.*$")
 
 (defn remote-server [req]
   (let [path (str "JSON-Schema-Test-Suite/remotes" (:uri req))]
@@ -34,40 +29,31 @@
 
 (comment (stop-server))
 
-(deftest a-schema-test
-  (doseq [test-file  (->> "draft4"
-                          io/resource
-                          io/file
-                          file-seq
-                          (filter (filter-by-name re-filter)))]
-    (when (.isFile test-file)
-      (let [test-case (json/parse-string (slurp (.getPath test-file)) keyword)]
-        (doseq [scenario test-case]
-          (testing (:description scenario)
-            (doseq [test-item (:tests scenario)]
-              (is (= (:valid test-item)
-                     (validate (:schema scenario) (:data test-item)))
-                  (str
-                   (with-out-str
-                     (pprint/pprint
-                      (check  (:schema scenario) (:data test-item))))
-                   "\n"
-                   (with-out-str
-                     (pprint/pprint
-                      (assoc test-item :schema (:schema scenario)))))))))))))
+(def re-filter #"^.*$")
+(defn filter-by-name [nm] (fn [fl] (re-matches nm fl)))
 
-(comment
-  (doseq [test-file  (->> "draft4"
-                          io/resource
-                          io/file
-                          file-seq
-                          (filter (filter-by-name re-filter)))]
-    (when (.isFile test-file)
-      (let [test-case (json/parse-string (slurp (.getPath test-file)) keyword)]
-        (doseq [scenario test-case]
-          (doseq [test-item (:tests scenario)]
-            (is (= (:valid test-item)
-                   (validate (:schema scenario) (:data test-item)))
-                (pr-str (assoc test-item :schema (:schema scenario)))))))))
-  )
+(def test-files (->> "draft4"
+                     io/resource
+                     io/file
+                     file-seq
+                     (filter #(.isFile %))
+                     (map #(.getPath %))
+                     (filter (filter-by-name re-filter))))
+
+(defn read-json [path] (json/parse-string (slurp path) keyword))
+
+(defn pp [x]
+  (with-out-str
+    (pprint/pprint x)))
+
+(deftest a-schema-test
+  (doseq [test-file test-files]
+    (let [test-case (read-json test-file)]
+      (doseq [{:keys [schema tests description] :as scenario} test-case]
+        (testing description
+          (doseq [{:keys [data valid] :as test-item} tests]
+            (let [result (check  schema data)]
+              (is (= valid (empty? (:errors result)))
+                  (pp {:result result :schema schema :case test-item})))))))))
+
 
