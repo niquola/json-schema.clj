@@ -2,13 +2,14 @@
   (:require [cheshire.core :as json]
             [clojure.set :as cset]
             [clojure.set :as set]
+            [json-schema.refs :as refs]
             [clojure.string :as str]))
 
 (declare validate)
 (declare validate*)
 
 (defn new-context [ctx schema]
-  (merge (or ctx {}) {:errors [] :warnings [] :current-schema schema}))
+  (merge (or ctx {}) {:base-uri "" :errors [] :warnings [] :docs {"" schema}}))
 
 (defn add-error [ctx err] (update-in ctx [:errors] conj err))
 
@@ -204,91 +205,14 @@
    {:expected "all unique"
     :actual (str subj)}))
 
-
-;; refs
-
-(defn decode-json-pointer [x]
-  (-> x
-      (str/replace #"~0" "~")
-      (str/replace #"~1" "/")
-      (str/replace #"%25" "%")))
-
-(defn ref-to-path [ref]
-  (mapv (fn [x]
-         (if (re-matches #"\d+" x)
-           (read-string x)
-           (keyword (decode-json-pointer x))))
-       (rest (str/split (.substring ref 1) #"/"))))
-
-(defn relative-ref? [url]
-  (and (not (.startsWith url "#"))
-       (not (re-matches #"^https?://.*" url))))
-
-(defn resolve-base-url [base-url url]
-  (cond (nil? base-url) url
-        (nil? url) base-url
-        (and base-url url) (str (.resolve (java.net.URI. base-url) url))))
-
-(defn resolve-ref [scope ref]
-  (when (string? ref)
-    (when-let [path (when (.startsWith ref "#") (ref-to-path ref))]
-     (println "RESOLVE SCOPE:" path " in " scope)
-     (get-in scope path))))
-
-(comment
-  (ref-to-path "#/a/b/0/c")
-  (ref-to-path "#/aka/b/0/c")
-  (resolve-ref {:a {:b [{:c 1}]}} "#/a/b/0/c"))
-
-(defn cycle-refs? [scope ref]
-  (loop [ref ref visited #{}]
-    (let [new-ref (resolve-ref scope ref)]
-      (if (:$ref new-ref)
-        (if (contains? visited ref)
-          true
-          (recur new-ref (conj visited ref)))
-        false))))
-
-(defn remote-ref? [ref]
-  (not (re-matches #"^#.*$" ref)))
-
-(defn default-resolve-ref [ref]
-  (when-let [res (slurp ref)]
-    (println "Loaded: " res)
-    (json/parse-string res keyword)))
-
-(defn resolve-remote-ref [ref ctx]
-  (let [uri (if (relative-ref? ref)
-              (resolve-base-url (:base-url ctx) ref)
-              ref)]
-    (if-let [f (:resolve-ref-fn ctx)]
-      (or (f uri) (default-resolve-ref uri))
-      (default-resolve-ref uri))))
-
-(defn remote-ref-fragment [ref]
-  (when-let [hsh (second (str/split ref #"#" 2))]
-    {:$ref (str "#" hsh)}))
-
 (defn check-ref [_ ref _ subj ctx]
-  (println "Ref:" ref)
-  (if (remote-ref? ref)
-    (if-let [schema (resolve-remote-ref ref ctx)]
-      (if-let [internal-ref (remote-ref-fragment ref)]
-        (validate* internal-ref subj (assoc ctx :current-schema schema))
-        (validate* schema subj (assoc ctx :current-schema schema)))
-      (add-error ctx {:details (str "could not resolve ref " ref)}))
-    (if (cycle-refs? (:current-schema ctx) ref)
-      (add-error ctx {:details (str "cycle refs" ref)})
-      (if-let [schema (resolve-ref (:current-schema ctx) ref)]
-        (do (println "Resolved to: " schema)
-            (validate* schema subj ctx))
-        (add-error ctx {:expected (str "ref " ref)
-                        :actual (str "not resolved")})))))
+  (if (refs/cycle-refs? ctx ref)
+    (add-error ctx {:details (str "cycle refs" ref)})
+    (let [[sch doc ctx] (refs/resolve-ref ctx ref)]
+      (if sch
+        (validate* sch subj (assoc-in ctx [:docs ""] doc))
+        (add-error ctx {:desc (str "Could not resolve " ref)})))))
 
-(defn update-base-url [ctx {id :id :as schema}]
-  (update-in ctx [:base-url] #(resolve-base-url % id)))
-
-;; end refs
 
 (def format-regexps
   {"date-time" #"(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))"
@@ -401,7 +325,8 @@
 
 (defn validate* [schema subj ctx]
   {:pre  [(map? schema)]}
-  (let [ctx (update-base-url ctx schema)]
+  (let [ctx (refs/set-resolution-context ctx (:id schema))]
+    ;;(update-base-url ctx schema)
     (reduce
      (fn [ctx [key rule]]
        (if-let [{:keys [type-filter validator]} (get validators key)]

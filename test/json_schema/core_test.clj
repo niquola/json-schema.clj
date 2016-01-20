@@ -56,4 +56,12 @@
               (is (= valid (empty? (:errors result)))
                   (pp {:result result :schema schema :case test-item})))))))))
 
-
+(comment
+  (doseq [test-file test-files]
+    (let [test-case (read-json test-file)]
+      (doseq [{:keys [schema tests description] :as scenario} test-case]
+        (doseq [{:keys [data valid] :as test-item} tests]
+          (let [result (check  schema data)]
+            (is (= valid (empty? (:errors result)))
+                (pp {:result result :schema schema :case test-item})))))))
+  )
