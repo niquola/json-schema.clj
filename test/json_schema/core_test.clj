@@ -56,6 +56,11 @@
               (is (= valid (empty? (:errors result)))
                   (pp {:result result :schema schema :case test-item})))))))))
 
+(deftest self-test
+  (let [core (read-json (.getPath (io/resource "core-schema.json")))]
+    (testing
+        (is (validate core core)))))
+
 (comment
   (doseq [test-file test-files]
     (let [test-case (read-json test-file)]
@@ -63,5 +68,4 @@
         (doseq [{:keys [data valid] :as test-item} tests]
           (let [result (check  schema data)]
             (is (= valid (empty? (:errors result)))
-                (pp {:result result :schema schema :case test-item})))))))
-  )
+                (pp {:result result :schema schema :case test-item}))))))))
