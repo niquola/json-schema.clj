@@ -18,21 +18,21 @@
       {:body (slurp path)}
       {:body (str "not found " path)})))
 
-(def test-server (atom nil))
+(defonce test-server (atom nil))
 
 (defn stop-server []
-  (when-let [srv @test-server]
-    (srv)))
+  (when-let [srv @test-server] (srv)
+            (reset! test-server nil)))
 
 (defn start-server []
   (stop-server)
   (reset! test-server
          (srv/run-server #'remote-server {:port 1234})))
 
-(comment
-  (start-server)
-  (stop-server))
 
+(start-server)
+
+(comment (stop-server))
 
 (deftest a-schema-test
   (doseq [test-file  (->> "draft4"

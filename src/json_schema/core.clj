@@ -7,11 +7,8 @@
 (declare validate)
 (declare validate*)
 
-(defn add-error [ctx err]
-  (update-in ctx [:errors] conj err))
-
-(defn add-warn [ctx err]
-  (update-in ctx [:warnings] conj err))
+(defn add-error [ctx err] (update-in ctx [:errors] conj err))
+(defn add-warn [ctx err] (update-in ctx [:warnings] conj err))
 
 (defn mk-bound-fn [{type-filter-fn :type-filter-fn
                     value-fn :value-fn
