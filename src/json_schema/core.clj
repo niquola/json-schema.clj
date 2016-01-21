@@ -5,7 +5,7 @@
             [json-schema.refs :as refs]
             [clojure.string :as str]))
 
-(declare validate)
+(declare valid?)
 (declare validate*)
 
 (defn new-context [ctx schema]
@@ -172,14 +172,14 @@
 
 (defn check-not [_ not-schema schema subj ctx]
   (add-error-on
-   ctx (not (validate not-schema subj))
+   ctx (not (valid? not-schema subj))
    {:expected (str "not " (pr-str not-schema))
     :details  subj
     :actual   "valid"}))
 
 (defn check-one-of [_ schemas _ subj ctx]
   (let [checked-cnt (reduce (fn [acc sch]
-                              (if (validate sch subj) (inc acc) acc))
+                              (if (valid? sch subj) (inc acc) acc))
                             0 schemas)]
     (add-error-on ctx
      (= 1 checked-cnt)
@@ -337,8 +337,8 @@
      ctx
      schema)))
 
-(defn check [schema subj & [ctx]]
+(defn validate [schema subj & [ctx]]
   (validate* schema subj (new-context ctx schema)))
 
-(defn validate [schema subj & [ctx]]
-  (-> (check schema subj ctx) :errors (empty?)))
+(defn valid? [schema subj & [ctx]]
+  (-> (validate schema subj ctx) :errors (empty?)))
