@@ -1,6 +1,6 @@
 (defproject json-schema "0.1.0-SNAPSHOT"
-  :description "FIXME: write description"
-  :url "http://example.com/FIXME"
+  :description "Conformant json-schema implementation"
+  :url "https://github.com/niquola/json-schema.clj "
   :license {:name "Eclipse Public License"
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :resource-paths ["resources" "JSON-Schema-Test-Suite/tests"]
