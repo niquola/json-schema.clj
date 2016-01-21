@@ -24,6 +24,7 @@ Implementation JSON schema in clojure, which passes specs (https://github.com/js
 
 ## Road Map
 
+* errors formatting
 * add ability to custom keywords
 * performance tests
 

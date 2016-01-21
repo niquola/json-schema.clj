@@ -237,6 +237,9 @@
                 :definitions
                 :id
                 :description
+                :$schema
+                :default
+                :details
                 :exclusiveMinimum}
 
    :type {:validator check-type}
@@ -338,7 +341,8 @@
      schema)))
 
 (defn validate [schema subj & [ctx]]
-  (validate* schema subj (new-context ctx schema)))
+  (select-keys (validate* schema subj (new-context ctx schema))
+               [:errors :warnings]))
 
 (defn valid? [schema subj & [ctx]]
   (-> (validate schema subj ctx) :errors (empty?)))
