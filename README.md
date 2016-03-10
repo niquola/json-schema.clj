@@ -21,12 +21,19 @@ Implementation JSON schema in clojure, which passes specs (https://github.com/js
 
 ```
 
+## Parital support for v5
+
+* constant
+* contains
+
+See https://github.com/json-schema/json-schema/wiki/v5-Proposals
 
 ## Road Map
 
 * errors formatting
 * add ability to custom keywords
 * performance tests
+* v5 support
 
 
 ## License

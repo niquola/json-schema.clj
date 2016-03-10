@@ -50,6 +50,7 @@
     :actual subj}))
 
 
+
 (defn string-utf8-length [x] (.count (.codePoints x)))
 
 
@@ -170,6 +171,20 @@
               (validate* item-schema value ctx))
             ctx subj)))
 
+(defn check-constant [_ item-schema schema subj ctx]
+  (add-error-on
+   ctx (= item-schema subj)
+   {:expected (str subj " equals " item-schema)
+    :actual "not equal"
+    :details  subj}))
+
+(defn check-contains [_ item-schema schema subj ctx]
+  (add-error-on
+   ctx (some #(valid? item-schema %) subj)
+   {:expected (str "contains on of matching " item-schema)
+    :actual "non of"
+    :details  subj}))
+
 (defn check-not [_ not-schema schema subj ctx]
   (add-error-on
    ctx (not (valid? not-schema subj))
@@ -264,6 +279,7 @@
    :patternProperties {:type-filter map?
                        :validator check-pattern-properites}
 
+
    :additionalProperties {:type-filter map?
                           :validator check-additional-properites}
 
@@ -280,6 +296,11 @@
    :items {:type-filter vector?
            :validator check-items}
 
+   :constant {:validator check-constant}
+
+   :contains {:type-filter vector?
+              :validator check-contains}
+
    :uniqueItems {:type-filter vector?
                  :validator check-uniq-items}
 
@@ -293,6 +314,7 @@
 
    :pattern {:type-filter string?
              :validator    check-pattern}
+
 
    :format {:type-filter string?
             :validator check-format}
