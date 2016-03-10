@@ -8,10 +8,30 @@
 (declare valid?)
 (declare validate*)
 
-(defn new-context [ctx schema]
-  (merge (or ctx {}) {:base-uri "" :errors [] :warnings [] :docs {"" schema}}))
+(defn new-context [ctx schema subj]
+  (merge (or ctx {})
+         {:base-uri ""
+          :errors []
+          :path []
+          :warnings []
+          :subj (or (:subj ctx) subj)
+          :docs {"" schema}}))
 
-(defn add-error [ctx err] (update-in ctx [:errors] conj err))
+(defn- push-path [ctx k]
+  (update-in ctx [:path] conj k))
+
+(defn- pop-path [ctx]
+  (update-in ctx [:path] (fn [v] (into [] (butlast v)))))
+
+(defn- resolve-$data [ctx sch]
+  (if-let [ref (:$data sch)]
+    (let [x (refs/resolve-relative-ref (:subj ctx) (:path ctx) ref)]
+      #_(println "RESOLVE " ref " in " (:subj ctx) " from " (:path ctx) " into " x)
+      (if (keyword? x) (name x) x))
+    sch))
+
+(defn add-error [ctx err]
+  (update-in ctx [:errors] conj (assoc err :path (:path ctx))))
 
 (defn add-error-on [ctx pred opts]
   (if-not pred (add-error ctx opts) ctx))
@@ -78,16 +98,18 @@
   (reduce
    (fn [ctx [prop-key prop-val]]
      (if-let [prop-sch (get props prop-key)]
-       (validate* prop-sch prop-val ctx)
+       (pop-path (validate* prop-sch prop-val (push-path ctx prop-key)))
        ctx))
    ctx subj))
 
 (defn check-enum [_ enum schema subj ctx]
-  (add-error-on
-   ctx
-   (some (fn [v] (= v subj)) enum)
-   {:expectend (str "one of " enum)
-    :actual subj}))
+  (let [resolved-enum (resolve-$data ctx enum)]
+    (add-error-on
+     ctx
+     (or (nil? resolved-enum)
+         (some (fn [v] (= (resolve-$data ctx v) subj)) resolved-enum))
+     {:expectend (str "one of " resolved-enum)
+      :actual subj})))
 
 (defn check-required [_ requireds schema subj ctx]
   (reduce (fn [ctx required-key]
@@ -142,7 +164,8 @@
                           {:expected (str "one of " s)
                            :actual (str "extra props: " (vec additional))})
         (map? a-prop)    (reduce (fn [ctx p-key]
-                                   (validate* a-prop (get subj p-key) ctx))
+                                   (pop-path
+                                    (validate* a-prop (get subj p-key) (push-path ctx p-key))))
                                  ctx additional)))))
 
 
@@ -152,7 +175,8 @@
      (let [re-pat (re-pattern (name pat))]
        (reduce (fn [ctx [k v]]
                  (if (re-find re-pat (name k))
-                   (validate* sch v ctx)
+                   (pop-path
+                    (validate* sch v (push-path ctx k)))
                    ctx)
                  ) ctx subj)))
    ctx props))
@@ -160,41 +184,46 @@
 (defn check-items [_ item-schema {additional-items :additionalItems :as schema} subj ctx]
   (if (vector? item-schema)
     (reduce (fn [ctx [idx v]]
-              (let [sch (or (get item-schema idx) additional-items)]
+              (let [sch (or (get item-schema idx) additional-items)
+                    new-ctx (push-path ctx idx)]
                 (cond
-                  (= false sch) (add-error ctx {:desc (str "No additional schema for item " idx) :actual subj})
-                  (map? sch)    (validate* sch v ctx)
+                  (= false sch) (pop-path
+                                 (add-error new-ctx {:desc (str "No additional schema for item " idx)
+                                                     :actual subj}))
+                  (map? sch)    (pop-path
+                                 (validate* sch v new-ctx))
                   :else         ctx)))
             ctx (map vector (range) subj))
 
-    (reduce (fn [ctx value]
-              (validate* item-schema value ctx))
-            ctx subj)))
+    (reduce (fn [ctx [idx value]]
+              (pop-path (validate* item-schema value (push-path ctx idx))))
+            ctx (map vector (range) subj))))
 
 (defn check-constant [_ item-schema schema subj ctx]
-  (add-error-on
-   ctx (= item-schema subj)
-   {:expected (str subj " equals " item-schema)
-    :actual "not equal"
-    :details  subj}))
+  (let [schema-value (resolve-$data ctx item-schema)]
+    (add-error-on
+     ctx (=  schema-value subj)
+     {:expected (str subj " equals " schema-value)
+      :actual "not equal"
+      :details  subj})))
 
 (defn check-contains [_ item-schema schema subj ctx]
   (add-error-on
-   ctx (some #(valid? item-schema %) subj)
+   ctx (some (fn [[idx x]] (valid? item-schema x (push-path ctx idx))) (map vector (range) subj))
    {:expected (str "contains on of matching " item-schema)
     :actual "non of"
     :details  subj}))
 
 (defn check-not [_ not-schema schema subj ctx]
   (add-error-on
-   ctx (not (valid? not-schema subj))
+   ctx (not (valid? not-schema subj ctx))
    {:expected (str "not " (pr-str not-schema))
     :details  subj
     :actual   "valid"}))
 
 (defn check-one-of [_ schemas _ subj ctx]
   (let [checked-cnt (reduce (fn [acc sch]
-                              (if (valid? sch subj) (inc acc) acc))
+                              (if (valid? sch subj ctx) (inc acc) acc))
                             0 schemas)]
     (add-error-on ctx
      (= 1 checked-cnt)
@@ -363,7 +392,7 @@
      schema)))
 
 (defn validate [schema subj & [ctx]]
-  (select-keys (validate* schema subj (new-context ctx schema))
+  (select-keys (validate* schema subj (new-context ctx schema subj))
                [:errors :warnings]))
 
 (defn valid? [schema subj & [ctx]]

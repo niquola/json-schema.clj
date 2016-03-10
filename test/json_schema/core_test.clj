@@ -35,7 +35,7 @@
 (defn filter-by-name [nm] (fn [fl] (re-matches nm fl)))
 
 (defn files [dir re-filter]
-  (->> dir 
+  (->> dir
        io/resource
        io/file
        file-seq
@@ -67,6 +67,8 @@
 
 (def v5-files (files-list
                ["v5/constant.json"
+                "v5/$data/constant.json"
+                "v5/$data/enum.json"
                 "v5/contains.json"]))
 
 (deftest v5-schema-test
@@ -76,6 +78,10 @@
         (testing description
           (doseq [{:keys [data valid] :as test-item} tests]
             (let [result (validate  schema data)]
+              (when-not (= valid (empty? (:errors result)))
+                (println " res: " result)
+                (println " item: " test-item)
+                (println " sch: " schema))
               (is (= valid (empty? (:errors result)))
                   (pp {:result result :schema schema :case test-item})))))))))
 
@@ -84,11 +90,3 @@
     (testing
         (is (valid? core core)))))
 
-(comment
-  (doseq [test-file test-files]
-    (let [test-case (read-json test-file)]
-      (doseq [{:keys [schema tests description] :as scenario} test-case]
-        (doseq [{:keys [data valid] :as test-item} tests]
-          (let [result (validate  schema data)]
-            (is (= valid (empty? (:errors result)))
-                (pp {:result result :schema schema :case test-item}))))))))

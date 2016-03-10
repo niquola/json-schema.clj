@@ -75,3 +75,21 @@
           (recur (:$ref new-ref) (conj visited ref)))
         false))))
 
+
+(defn resolve-relative-ref
+  "See rfc http://tools.ietf.org/html/draft-luff-relative-json-pointer-00"
+  [doc current-path ref]
+  (let [return-key? (not (nil? (re-matches #"^.*#$" ref)))
+        ref (str/replace ref #"#$" "")
+        path (str/split ref #"/")
+        path (reduce (fn [acc x] (conj acc (if (re-matches #"^\d+$" x)
+                                             (read-string x)
+                                             (keyword x))))
+                     [] path)
+        backward (first path)
+        path (rest path)
+        absolute-path (concat (drop-last backward current-path) path)]
+    (if return-key?
+      (last absolute-path)
+      (get-in doc absolute-path))))
+
