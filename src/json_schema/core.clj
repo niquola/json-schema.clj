@@ -140,7 +140,7 @@
         (= a-prop false) (add-error-on ctx
                           (empty? additional)
                           {:expected (str "one of " s)
-                           :actual (str "extra props: " additional)})
+                           :actual (str "extra props: " (vec additional))})
         (map? a-prop)    (reduce (fn [ctx p-key]
                                    (validate* a-prop (get subj p-key) ctx))
                                  ctx additional)))))
