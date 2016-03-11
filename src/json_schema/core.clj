@@ -268,6 +268,22 @@
     :details  subj
     :actual   "valid"}))
 
+(defn check-switch [_ switch schema subj ctx]
+  (loop [[clause & clauses] switch ctx ctx]
+    (if (or (not (:if clause)) (valid? (:if clause) subj ctx))
+      (let [then (:then clause)]
+        (cond
+          (= true then) ctx
+          (= false then) (add-error
+                          ctx {:expected (str "switch keyword failed on " subj " by " (:if clause))})
+          (map? then)    (let [new-ctx (validate* then subj ctx)]
+                           (if (and (:continue clause) (not (empty? clauses)))
+                             (recur clauses new-ctx)
+                             new-ctx))
+          :else (add-error
+                 ctx {:expected (str "unexpected switch clause " clause)})))
+      (if (empty? clauses) ctx (recur clauses ctx)))))
+
 (defn check-one-of [_ schemas _ subj ctx]
   (let [checked-cnt (reduce (fn [acc sch]
                               (if (valid? sch subj ctx) (inc acc) acc))
@@ -312,7 +328,9 @@
 
 
 (def format-regexps
-  {"date-time" #"(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))"
+  {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))$"
+   "date"      #"^(\d{4})-(\d{2})-(\d{2})$"
+   "time"      #"^(\d{2}):(\d{2}):(\d{2})(\.\d+)?([zZ]|(\+|\-)(\d{2}):(\d{2}))?$"
    "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
    "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
    "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
@@ -323,14 +341,80 @@
 
 (defn check-format [key fmt _ subj ctx]
   (if-let [resolved-fmt (resolve-$data ctx fmt)]
-    (if-let [re (get format-regexps resolved-fmt)]
-      (add-error-on
-       ctx (re-matches re subj)
-       {:key key
-        :expected (str subj  " matches " re)})
-      (add-error ctx {:key key
-                      :details (str "Not known format" fmt)}))
+    (cond
+      (or (string? resolved-fmt)
+          (keyword? resolved-fmt)) (if-let [re (get format-regexps (name resolved-fmt))]
+                                     (add-error-on
+                                      ctx (re-matches re subj)
+                                      {:key key
+                                       :expected (str subj  " matches " re)})
+                                     (add-error ctx {:key key
+                                                     :details (str "Not known format " resolved-fmt)}))
+
+      (nil? resolved-fmt) ctx
+      :else (add-error
+             ctx {:expected (str "format value should be string, but typeof " resolved-fmt "=" (type resolved-fmt))}))
     ctx))
+
+
+(defn- remove-timezone [x]
+  (str/replace x #"([zZ]|[+-]\d{2}(:\d{2})?)$" ""))
+
+(comment
+  (remove-timezone "12:00:23.000Z")
+  (remove-timezone "12:00:23.000+03:01"))
+
+(defn- litteral-date-compare [d1 d2]
+  (compare (remove-timezone d1) (remove-timezone d2)))
+
+(def format-comparators
+  {"date"  litteral-date-compare
+   "time" litteral-date-compare 
+   "unknown" (fn [& args] 0)
+   "date-time" litteral-date-compare})
+
+
+(defn check-format-minmax [exclusion-key
+                          exclusive-op non-exclusive-op
+                          key limit schema subj ctx]
+  (let [format         (resolve-$data ctx (:format schema))
+        exclusive      (resolve-$data ctx (get schema exclusion-key))
+        resolved-limit (resolve-$data ctx limit)
+        op (if exclusive exclusive-op non-exclusive-op)]
+
+    (cond
+      (and (or (nil? exclusive) (instance? Boolean exclusive))
+           (string? resolved-limit)) (if-let [comparator-fn (get format-comparators format)]
+                                       (add-error-on
+                                        ctx (and resolved-limit subj (op 0 (comparator-fn resolved-limit subj)))
+                                        {:expected (str "expected " subj " "
+                                                        (if (= exclusion-key :exclusiveFormatMaximum) ">" "<")
+                                                        (when-not exclusive "=")
+                                                        " " limit)})
+                                       (add-error
+                                        ctx {:expected (str "Do not know how to compare format " format)}))
+      (nil? resolved-limit) ctx
+
+      (not (string? resolved-limit)) (add-error ctx {:expected (str (name key) "should be string, but typeof " resolved-limit "=" (type resolved-limit))})
+
+      (not (or (nil? exclusive) (instance? Boolean exclusive))) (add-error ctx {:expected (str (name exclusion-key) "should be boolean, but typeof " exclusive "=" (type exclusive))})
+
+      :else (-> ctx
+                (add-error {:expected (str (name key) "should be string, but typeof " resolved-limit "=" (type resolved-limit))})
+                (add-error {:expected (str (name exclusion-key) "should be boolean, but typeof " exclusive "=" (type exclusive))})))))
+
+
+(defn check-format-maximum [key limit schema subj ctx]
+  (check-format-minmax
+   :exclusiveFormatMaximum
+   < <=
+   key limit schema subj ctx))
+
+(defn check-format-minimum [key limit schema subj ctx]
+  (check-format-minmax
+   :exclusiveFormatMinimum
+   > >=
+   key limit schema subj ctx))
 
 ;; todo should be atom
 (def validators
@@ -341,11 +425,14 @@
                 :$schema
                 :default
                 :details
+                :exclusiveFormatMinimum
+                :exclusiveFormatMaximum
                 :exclusiveMinimum}
 
    :type {:validator check-type}
 
    :not {:validator check-not}
+   :switch {:validator check-switch}
 
    :oneOf {:validator check-one-of}
 
@@ -404,6 +491,12 @@
 
    :format {:type-filter string?
             :validator check-format}
+
+   :formatMaximum {:type-filter string?
+                   :validator check-format-maximum}
+
+   :formatMinimum {:type-filter string?
+                   :validator check-format-minimum}
 
    :maxLength (mk-bound-fn {:type-filter string?
                             :value-fn string-utf8-length

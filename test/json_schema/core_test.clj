@@ -68,8 +68,8 @@
 (def v5-file-names ["constant.json"
                     "enum.json"
                     "format.json"
-                    ;; "formatMaximum.json"
-                    ;; "formatMinimum.json"
+                    "formatMaximum.json"
+                    "formatMinimum.json"
                     "maxItems.json"
                     "maxLength.json"
                     "maximum.json"
@@ -86,6 +86,9 @@
 (def v5-files (files-list
                (concat
                 ["v5/constant.json"
+                 "v5/formatMaximum.json"
+                 "v5/formatMinimum.json"
+                 "v5/switch.json"
                  "v5/contains.json"]
                 (mapv #(str "v5/$data/" %) v5-file-names))))
 
