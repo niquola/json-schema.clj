@@ -69,6 +69,11 @@
                ["v5/constant.json"
                 "v5/$data/constant.json"
                 "v5/$data/enum.json"
+                "v5/$data/format.json"
+                "v5/$data/maxItems.json"
+                "v5/$data/maxLength.json"
+                "v5/$data/maximum.json"
+                "v5/$data/minimum.json"
                 "v5/contains.json"]))
 
 (deftest v5-schema-test

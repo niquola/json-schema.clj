@@ -23,6 +23,14 @@
 (defn- pop-path [ctx]
   (update-in ctx [:path] (fn [v] (into [] (butlast v)))))
 
+(defn safe-parse-number [x]
+  (cond
+    (string? x) (if (re-matches #"^\d+$" x)
+                  (read-string x) nil)
+    (number? x) x
+    :else nil))
+
+
 (defn- resolve-$data [ctx sch]
   (if-let [ref (:$data sch)]
     (let [x (refs/resolve-relative-ref (:subj ctx) (:path ctx) ref)]
@@ -38,21 +46,45 @@
 
 (defn add-warn  [ctx err] (update-in ctx [:warnings] conj err))
 
+(defn validate-bounds [value-fn op [key rule schema subj ctx]]
+  (let [value (value-fn subj)
+        resolved-rule (resolve-$data ctx rule)]
+    (cond
+      (number? resolved-rule)
+      (add-error-on
+       ctx
+       (op value resolved-rule)
+       {:desc key
+        :actual value
+        :expected (str  key " then " rule)})
+
+      (nil? resolved-rule) ctx
+
+      :else (add-error ctx
+                       {:desc   (str "max/min value should be number")
+                        :actual (str "typeof " resolved-rule "=" (type resolved-rule))}))))
+
 (defn mk-bound-fn [{type-filter :type-filter
                     value-fn :value-fn
-                    operator :operator
-                    operator-fn :operator-fn}]
+                    operator :operator}]
 
   {:type-filter type-filter
-   :validator (fn [key rule schema subj ctx]
-                (let [op (or operator (operator-fn key rule schema subj ctx))
-                      value (value-fn subj)]
-                  (add-error-on
-                   ctx
-                   (op value rule)
-                   {:desc key 
-                    :actual value 
-                    :expected (str  key " then " rule)})))})
+   :validator (fn [& args]
+                (validate-bounds value-fn operator args))})
+
+
+(defn mk-minmax-validator [exclusive-key exclusive-op non-exclusive-op]
+  (fn [& args]
+    (let [[_ _ schema _ ctx] args]
+      (if (contains? schema exclusive-key)
+        (let [resolved-exclusive (resolve-$data ctx (get schema exclusive-key))]
+          (cond
+            (instance? Boolean resolved-exclusive) (validate-bounds identity (if resolved-exclusive  exclusive-op non-exclusive-op) args)
+            (nil? resolved-exclusive) (validate-bounds identity non-exclusive-op args)
+            :else (add-error
+                   ctx {:desc   (str (name exclusive-key) " value should be boolean")
+                        :actual (str "typeof " resolved-exclusive "=" (type resolved-exclusive))})))
+        (validate-bounds identity non-exclusive-op args)))))
 
 (defn check-multiple-of [_ divider _ subj ctx]
   (let [res (/ subj divider)]
@@ -264,16 +296,20 @@
    "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
    "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
    "ipv6"      #"(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))"
-   "uri"       #"^((https?|ftp|file):)?//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"})
+   "uri"       #"^((https?|ftp|file):)?//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"
+   "unknownformat"   #"^.*$"
+   "unknown"   #"^.*$"})
 
 (defn check-format [key fmt _ subj ctx]
-  (if-let [re (get format-regexps fmt)]
-    (add-error-on
-     ctx (re-matches re subj)
-     {:key key
-      :expected (str subj  " matches " re)})
-    (add-error ctx {:key key
-                    :details (str "Not known format" fmt)})))
+  (if-let [resolved-fmt (resolve-$data ctx fmt)]
+    (if-let [re (get format-regexps resolved-fmt)]
+      (add-error-on
+       ctx (re-matches re subj)
+       {:key key
+        :expected (str subj  " matches " re)})
+      (add-error ctx {:key key
+                      :details (str "Not known format" fmt)}))
+    ctx))
 
 ;; todo should be atom
 (def validators
@@ -357,15 +393,12 @@
                             :operator >=})
 
 
-   :minimum (mk-bound-fn {:type-filter number?
-                          :value-fn identity
-                          :operator-fn (fn [_ _ schema & _]
-                                         (if (:exclusiveMinimum schema) > >=))})
-   :maximum (mk-bound-fn {:type-filter number?
-                          :value-fn identity
-                          :operator-fn (fn [_ _ schema & _]
-                                         (if (:exclusiveMaximum schema) < <=))})
+   :minimum {:type-filter number?
+             :validator (mk-minmax-validator :exclusiveMinimum > >=)}
 
+   :maximum {:type-filter number?
+             :validator (mk-minmax-validator :exclusiveMaximum < <=)}
+   
    :multipleOf {:type-filter number?
                 :validator check-multiple-of}
 

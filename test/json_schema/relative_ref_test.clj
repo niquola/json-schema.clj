@@ -4,6 +4,10 @@
 
 ;; see http://tools.ietf.org/html/draft-luff-relative-json-pointer-00
 
+(def doc
+  {:foo [:bar :baz],
+   :highly {:nested {:objects true}}})
+
 (def table
   {[:foo 1] [["0" :baz]
              ["1/0" :bar]
