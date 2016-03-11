@@ -84,7 +84,7 @@
         path (str/split ref #"/")
         path (reduce (fn [acc x] (conj acc (if (re-matches #"^\d+$" x)
                                              (read-string x)
-                                             (keyword x))))
+                                             (keyword (decode-json-pointer x)))))
                      [] path)
         backward (first path)
         path (rest path)

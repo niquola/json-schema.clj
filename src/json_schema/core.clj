@@ -87,19 +87,29 @@
         (validate-bounds identity non-exclusive-op args)))))
 
 (defn check-multiple-of [_ divider _ subj ctx]
-  (let [res (/ subj divider)]
-    (add-error-on
-     ctx
-     (re-matches #"^\d+(\.0)?$" (str res))
-     {:expected (str  subj "/" divider)
-      :actual (str res)})))
+  (let [resolved-devider (resolve-$data ctx divider)]
+    (cond
+      (number? resolved-devider) (let [res (/ subj resolved-devider)]
+                                   (add-error-on
+                                    ctx
+                                    (re-matches #"^\d+(\.0)?$" (str res))
+                                    {:expected (str  subj "/" divider)
+                                     :actual (str res)}))
+      (nil? resolved-devider) ctx
+      :else (add-error
+             ctx {:expected (str  "multipleOf value must be number, but typeof " resolved-devider "=" (type resolved-devider))}))))
 
 (defn check-pattern [_ pat _ subj ctx]
-  (add-error-on
-   ctx
-   (re-find (re-pattern pat) subj)
-   {:expected (str "matches: " pat)
-    :actual subj}))
+  (let [resolved-pat (resolve-$data ctx pat)]
+    (cond
+      (string? resolved-pat) (add-error-on
+                              ctx
+                              (re-find (re-pattern resolved-pat) subj)
+                              {:expected (str "matches: " resolved-pat)
+                               :actual subj})
+      (nil? resolved-pat) ctx
+      :else (add-error
+             ctx {:expected (str "pattern value should be string, but typeof " resolved-pat " = " (type resolved-pat))}))))
 
 
 
@@ -144,13 +154,18 @@
       :actual subj})))
 
 (defn check-required [_ requireds schema subj ctx]
-  (reduce (fn [ctx required-key]
-            (add-error-on
-             ctx
-             (contains? subj (keyword required-key))
-             {:expectend (str "field " required-key " is required")
-              :actual subj}))
-          ctx requireds))
+  (let [resolved-requireds (resolve-$data ctx requireds)]
+    (cond
+      (vector? resolved-requireds) (reduce (fn [ctx required-key]
+                                             (add-error-on
+                                              ctx
+                                              (contains? subj (keyword required-key))
+                                              {:expectend (str "field " required-key " is required")
+                                               :actual subj}))
+                                           ctx resolved-requireds)
+      (nil? resolved-requireds) ctx
+      :else (add-error
+             ctx {:expected (str "required value should be array, but typeof " resolved-requireds "=" (type resolved-requireds))}))))
 
 (defn- collect-missing-keys [subj requered-keys]
   (reduce (fn [missing-keys key]
@@ -268,18 +283,24 @@
     (add-error-on ctx
      (some #(empty? %) results)
      {:expected (str "any of " schemas)
-      :actual (pr-str results) 
+      :actual (pr-str results)
       :details  subj})))
 
 (defn check-all-of [_ schemas _ subj ctx]
   (reduce (fn [ctx sch] (validate* sch subj ctx)) ctx schemas))
 
 (defn check-uniq-items [_ unique? _ subj ctx]
-  (add-error-on
-   ctx
-   (= (count subj) (count (set subj)))
-   {:expected "all unique"
-    :actual (str subj)}))
+  (let [resolved-unique (resolve-$data ctx unique?)]
+    (cond
+      (instance? Boolean resolved-unique) (add-error-on
+                                           ctx (if resolved-unique
+                                                 (= (count subj) (count (set subj)))
+                                                 (not (= (count subj) (count (set subj)))))
+                                           {:expected "all unique"
+                                            :actual (str subj)})
+      (nil? resolved-unique) ctx
+      :else (add-error
+             ctx {:expected (str "uniqueItems value should be boolean, but typeof " resolved-unique "=" (type resolved-unique))}))))
 
 (defn check-ref [_ ref _ subj ctx]
   (if (refs/cycle-refs? ctx ref)
