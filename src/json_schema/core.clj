@@ -133,7 +133,7 @@
     (add-error-on
      ctx
      (some (fn [v] (v subj)) validators-fns)
-     {:expectend (str "type:" tp)
+     {:expected (str "type:" tp)
       :actual subj})))
 
 (defn check-properties [_ props schema subj ctx]
@@ -144,13 +144,37 @@
        ctx))
    ctx subj))
 
+(defn check-pattern-groups [_ props schema subj ctx]
+  (reduce
+   (fn [ctx [key-regexp group-schema]]
+     (let [regexp (re-pattern (name key-regexp))]
+       (let [new-ctx (reduce
+                      (fn [ctx [prop-key prop-val]]
+                        (if (re-find regexp (name prop-key)) 
+                          (-> (validate* (:schema group-schema) prop-val (push-path ctx prop-key))
+                              (pop-path)
+                              (update :_matched-props inc))
+                          ctx))
+                      (assoc ctx :_matched-props 0) subj)]
+         (-> new-ctx
+             (add-error-on
+              (or (nil? (:minimum group-schema))
+                   (>= (:_matched-props new-ctx) (:minimum group-schema)))
+              {:expected (str "keys matched " key-regexp " count " (:_matched-props new-ctx) "  >= " (:minimum group-schema))})
+             (add-error-on
+              (or (nil? (:maximum group-schema))
+                   (<= (:_matched-props new-ctx) (:maximum group-schema)))
+              {:expected (str "keys matched " key-regexp " count " (:_matched-props new-ctx) "  <= " (:maximum group-schema))})
+             (dissoc :_matched-props)))))
+   ctx props))
+
 (defn check-enum [_ enum schema subj ctx]
   (let [resolved-enum (resolve-$data ctx enum)]
     (add-error-on
      ctx
      (or (nil? resolved-enum)
          (some (fn [v] (= (resolve-$data ctx v) subj)) resolved-enum))
-     {:expectend (str "one of " resolved-enum)
+     {:expected (str "one of " resolved-enum)
       :actual subj})))
 
 (defn check-required [_ requireds schema subj ctx]
@@ -160,12 +184,26 @@
                                              (add-error-on
                                               ctx
                                               (contains? subj (keyword required-key))
-                                              {:expectend (str "field " required-key " is required")
+                                              {:expected (str "field " required-key " is required")
                                                :actual subj}))
                                            ctx resolved-requireds)
       (nil? resolved-requireds) ctx
       :else (add-error
              ctx {:expected (str "required value should be array, but typeof " resolved-requireds "=" (type resolved-requireds))}))))
+
+(defn- contains-pattern? [subj-keys regexp]
+  (some #(re-find regexp %) subj-keys))
+
+(defn check-pattern-required [_ requireds schema subj ctx]
+  (let [requireds-regexps (map #(re-pattern %) requireds)
+        subj-keys (map name (keys subj))]
+    (reduce (fn [ctx required-key]
+              (add-error-on
+               ctx
+               (contains-pattern? subj-keys required-key)
+               {:expected (str "some fields should match " required-key " but " subj-keys)
+                :actual subj-keys}))
+            ctx requireds-regexps)))
 
 (defn- collect-missing-keys [subj requered-keys]
   (reduce (fn [missing-keys key]
@@ -202,7 +240,9 @@
     (let [s   (set (keys subj)) 
           p   (set (keys (:properties schema)))
           pp  (map (fn [re] (re-pattern (name re)))
-                   (keys (:patternProperties schema)))
+                   (concat
+                    (or (keys (:patternProperties schema)) [])
+                    (or (keys (:patternGroups schema)) [])))
           additional  (->> (set/difference s p)
                            (remove (fn [x] (some #(re-find % (name x))  pp))))]
       (cond
@@ -443,8 +483,14 @@
    :properties {:type-filter map?
                 :validator check-properties}
 
+   :patternGroups {:type-filter map?
+                   :validator check-pattern-groups}
+
    :required {:type-filter map?
               :validator check-required}
+
+   :patternRequired {:type-filter map?
+                     :validator check-pattern-required}
 
    :dependencies {:type-filter map?
                   :validator check-dependencies}

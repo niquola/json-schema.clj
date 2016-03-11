@@ -65,32 +65,8 @@
               (is (= valid (empty? (:errors result)))
                   (pp {:result result :schema schema :case test-item})))))))))
 
-(def v5-file-names ["constant.json"
-                    "enum.json"
-                    "format.json"
-                    "formatMaximum.json"
-                    "formatMinimum.json"
-                    "maxItems.json"
-                    "maxLength.json"
-                    "maximum.json"
-                    "minItems.json"
-                    "minLength.json"
-                    "minProperties.json"
-                    "maxProperties.json"
-                    "minimum.json"
-                    "multipleOf.json"
-                    "pattern.json"
-                    "required.json"
-                    "uniqueItems.json"])
 
-(def v5-files (files-list
-               (concat
-                ["v5/constant.json"
-                 "v5/formatMaximum.json"
-                 "v5/formatMinimum.json"
-                 "v5/switch.json"
-                 "v5/contains.json"]
-                (mapv #(str "v5/$data/" %) v5-file-names))))
+(def v5-files (files "v5" re-filter))
 
 (deftest v5-schema-test
   (doseq [test-file v5-files]
