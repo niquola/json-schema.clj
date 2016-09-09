@@ -177,6 +177,7 @@
      {:expected (str "one of " resolved-enum)
       :actual subj})))
 
+
 (defn check-required [_ requireds schema subj ctx]
   (let [resolved-requireds (resolve-$data ctx requireds)]
     (cond
@@ -248,7 +249,7 @@
       (cond
         (= a-prop false) (add-error-on ctx
                           (empty? additional)
-                          {:expected (str "one of " s)
+                          {:expected (str "one of " p)
                            :actual (str "extra props: " (vec additional))})
         (map? a-prop)    (reduce (fn [ctx p-key]
                                    (pop-path
@@ -365,6 +366,9 @@
       (if sch
         (validate* sch subj (assoc-in ctx [:docs ""] doc))
         (add-error ctx {:desc (str "Could not resolve " ref)})))))
+
+(defn type-property [k prop schema subj ctx]
+  (check-ref k (str "#/definitions/" (get subj prop)) schema subj ctx))
 
 
 (def format-regexps
@@ -562,7 +566,10 @@
    :multipleOf {:type-filter number?
                 :validator check-multiple-of}
 
-   :enum {:validator check-enum}})
+   :enum {:validator check-enum}
+
+   :typeProperty {:type-filter map?
+                  :validator type-property}})
 
 
 (defn warn-on-unknown-keys [key ctx]

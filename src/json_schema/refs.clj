@@ -8,9 +8,13 @@
 (defn to-uri [x] (java.net.URI. x))
 
 (defn resolve-uri [base-uri uri]
-  (cond (nil? base-uri) uri
-        (nil? uri) base-uri
-        (and base-uri uri) (str (.resolve (to-uri base-uri) uri))))
+  (try
+    (cond (nil? base-uri) uri
+          (nil? uri) base-uri
+          (and base-uri uri) (str (.resolve (to-uri base-uri) uri)))
+    (catch Exception e
+      (println "Ups" base-uri uri)
+      nil)))
 
 
 (defn decode-json-pointer [x]
