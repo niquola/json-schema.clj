@@ -34,7 +34,7 @@
 (defn- resolve-$data [ctx sch]
   (if-let [ref (:$data sch)]
     (let [x (refs/resolve-relative-ref (:subj ctx) (:path ctx) ref)]
-      #_(println "RESOLVE " ref " in " (:subj ctx) " from " (:path ctx) " into " x)
+      (println "RESOLVE " ref " in " (:subj ctx) " from " (:path ctx) " into " x)
       (if (keyword? x) (name x) x))
     sch))
 
@@ -115,6 +115,8 @@
 
 (defn string-utf8-length [x] (.count (.codePoints x)))
 
+(defn is-array? [x]
+  (or (seq? x) (and (coll? x) (not (map? x)))))
 
 ;; todo should be atom
 (def basic-types
@@ -181,7 +183,7 @@
 (defn check-required [_ requireds schema subj ctx]
   (let [resolved-requireds (resolve-$data ctx requireds)]
     (cond
-      (vector? resolved-requireds) (reduce (fn [ctx required-key]
+      (is-array? resolved-requireds) (reduce (fn [ctx required-key]
                                              (add-error-on
                                               ctx
                                               (contains? subj (keyword required-key))
