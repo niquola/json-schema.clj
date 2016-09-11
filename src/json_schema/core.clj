@@ -367,6 +367,14 @@
         (validate* sch subj (assoc-in ctx [:docs ""] doc))
         (add-error ctx {:desc (str "Could not resolve " ref)})))))
 
+(defn check-deffered [k ref x subj ctx]
+  (let [item (merge {:value subj} ref {:path (:path ctx)})]
+    (update-in ctx [:deffereds]
+               (fn [ds]
+                 (if ds
+                   (conj ds item)
+                   #{item})))))
+
 (defn type-property [k prop schema subj ctx]
   (check-ref k (str "#/definitions/" (get subj prop)) schema subj ctx))
 
@@ -515,6 +523,7 @@
                                 :operator >=})
 
    :$ref {:validator check-ref}
+   :$deffered {:validator check-deffered}
 
    :items {:type-filter vector?
            :validator check-items}
@@ -593,7 +602,7 @@
 
 (defn validate [schema subj & [ctx]]
   (select-keys (validate* schema subj (new-context ctx schema subj))
-               [:errors :warnings]))
+               [:errors :warnings :deffereds]))
 
 (defn valid? [schema subj & [ctx]]
   (-> (validate schema subj ctx) :errors (empty?)))
