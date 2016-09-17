@@ -5,7 +5,10 @@
 ;; json reference - http://tools.ietf.org/html/draft-pbryan-zyp-json-ref-03#page-3
 ;; json pointer -  http://tools.ietf.org/html/draft-ietf-appsawg-json-pointer-07
 
-(defn to-uri [x] (java.net.URI. x))
+(defn to-uri [x]
+  (try (java.net.URI. x)
+       (catch Exception e
+         (throw (Exception. (str "unable to parse \"" (pr-str x) "\" as uri"))))))
 
 (defn resolve-uri [base-uri uri]
   (try

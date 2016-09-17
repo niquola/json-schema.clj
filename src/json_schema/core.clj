@@ -377,8 +377,12 @@
                    (conj ds item)
                    #{item})))))
 
+
 (defn type-property [k prop schema subj ctx]
-  (check-ref k (str "#/definitions/" (get subj prop)) schema subj ctx))
+  (if-let [tp (get subj (keyword prop))]
+    (check-ref k (str "#/definitions/" tp) schema subj ctx)
+    (add-error ctx {:details (str "property " prop " should not be empty")
+                    :actual subj})))
 
 
 (def format-regexps
