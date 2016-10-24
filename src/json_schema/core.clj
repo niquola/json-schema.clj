@@ -25,16 +25,13 @@
 
 (defn safe-parse-number [x]
   (cond
-    (string? x) (if (re-matches #"^\d+$" x)
-                  (read-string x) nil)
+    (string? x) (if (re-matches #"^\d+$" x) (read-string x) nil)
     (number? x) x
     :else nil))
-
 
 (defn- resolve-$data [ctx sch]
   (if-let [ref (:$data sch)]
     (let [x (refs/resolve-relative-ref (:subj ctx) (:path ctx) ref)]
-      (println "RESOLVE " ref " in " (:subj ctx) " from " (:path ctx) " into " x)
       (if (keyword? x) (name x) x))
     sch))
 
