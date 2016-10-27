@@ -366,9 +366,9 @@
         (validate* sch subj (assoc-in ctx [:docs ""] doc))
         (add-error ctx {:desc (str "Could not resolve " ref)})))))
 
-(defn check-deffered [k ref x subj ctx]
+(defn check-deferred [k ref x subj ctx]
   (let [item (merge {:value subj} ref {:path (:path ctx)})]
-    (update-in ctx [:deffereds]
+    (update-in ctx [:deferreds]
                (fn [ds]
                  (if ds
                    (conj ds item)
@@ -526,7 +526,7 @@
                                 :operator >=})
 
    :$ref {:validator check-ref}
-   :$deffered {:validator check-deffered}
+   :$deferred {:validator check-deferred}
 
    :items {:type-filter vector?
            :validator check-items}
@@ -605,7 +605,7 @@
 
 (defn validate [schema subj & [ctx]]
   (select-keys (validate* schema subj (new-context ctx schema subj))
-               [:errors :warnings :deffereds]))
+               [:errors :warnings :deferreds]))
 
 (defn valid? [schema subj & [ctx]]
   (-> (validate schema subj ctx) :errors (empty?)))
