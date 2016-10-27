@@ -604,8 +604,11 @@
      schema)))
 
 (defn validate [schema subj & [ctx]]
-  (select-keys (validate* schema subj (new-context ctx schema subj))
-               [:errors :warnings :deferreds]))
+  (let [res (select-keys (validate* schema subj (new-context ctx schema subj))
+                         [:errors :warnings :deferreds])]
+    (if (and (empty? (:errors res)) (empty? (:deferreds res)))
+      nil
+      res)))
 
 (defn valid? [schema subj & [ctx]]
   (-> (validate schema subj ctx) :errors (empty?)))
