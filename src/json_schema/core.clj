@@ -9,13 +9,15 @@
 (declare validate*)
 
 (defn new-context [ctx schema subj]
-  (merge (or ctx {})
-         {:base-uri ""
-          :errors []
-          :path []
-          :warnings []
-          :subj (or (:subj ctx) subj)
-          :docs {"" schema}}))
+  (let [docs (-> (:docs ctx)
+                 (cond-> (nil? (get-in ctx [:docs ""])) (assoc "" schema)))]
+    (merge (or ctx {})
+           {:base-uri ""
+            :errors []
+            :path []
+            :warnings []
+            :subj (or (:subj ctx) subj)
+            :docs docs})))
 
 (defn- push-path [ctx k]
   (update-in ctx [:path] conj k))
