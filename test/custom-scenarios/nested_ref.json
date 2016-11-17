@@ -1,0 +1,17 @@
+[{
+  "description": "nested ref",
+  "schema": {"oneOf": [{"$ref": "#/definitions/str"}],
+             "definitions": {"str": {"type": "string"}}},
+  "tests": [
+    {
+      "description": "nested ref valid",
+      "data": "a",
+      "valid": true
+    },
+    {
+      "description": "nested ref invalid",
+      "data": 1,
+      "valid": false
+    }
+  ]
+}]

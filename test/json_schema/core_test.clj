@@ -15,21 +15,14 @@
       {:body (slurp path)}
       {:body (str "not found " path)})))
 
-(defonce test-server (atom nil))
+(defn with-server [f]
+  ;; port number is important it's used in tests
+  (let [srv (srv/run-server #'remote-server {:port 1234})]
+    (try
+      (f)
+      (finally (srv)))))
 
-(defn stop-server []
-  (when-let [srv @test-server] (srv)
-            (reset! test-server nil)))
-
-(defn start-server []
-  (stop-server)
-  (reset! test-server
-         (srv/run-server #'remote-server {:port 1234})))
-
-
-(start-server)
-
-(comment (stop-server))
+(use-fixtures :once with-server)
 
 (def re-filter #"^.*$")
 (defn filter-by-name [nm] (fn [fl] (re-matches nm fl)))
@@ -49,14 +42,13 @@
                    io/file
                    (.getPath))) fs))
 
-(def test-files (files "draft4" re-filter))
 
 (defn read-json [path] (json/parse-string (slurp path) keyword))
 
 (defn pp [x] (with-out-str (pprint/pprint x)))
 
-(deftest a-schema-test
-  (doseq [test-file test-files]
+(defn test-files [files]
+  (doseq [test-file files]
     (let [test-case (read-json test-file)]
       (doseq [{:keys [schema tests description] :as scenario} test-case]
         (testing description
@@ -65,6 +57,11 @@
               (is (= valid (empty? (:errors result)))
                   (pp {:result result :schema schema :case test-item})))))))))
 
+(deftest a-schema-test
+  (test-files (files "draft4" re-filter)))
+
+(deftest custom-tests
+  (test-files (files "custom-scenarios" re-filter)))
 
 (def v5-files (files "v5" re-filter))
 
