@@ -193,6 +193,24 @@
       :else (add-error
              ctx {:expected (str "required value should be array, but typeof " resolved-requireds "=" (type resolved-requireds))}))))
 
+;; custom extension
+(defn check-exclusive-props [_ ex-props schema subj ctx]
+  (reduce (fn [ctx ex]
+            (let [props (:properties ex)
+                  vals (keys (select-keys subj props))]
+              (cond
+                (< 1 (count vals))
+                (add-error
+                 ctx {:expected (str "Properties " (str/join "," (map name vals)) " are mutually exclusive")})
+
+                (and (:required ex) (< (count (filter identity vals)) 1))
+                (add-error
+                 ctx {:expected (str "One of properties " (str/join "," (map name props)) " is required")})
+
+                :else
+                ctx)))
+          ctx ex-props))
+
 (defn- contains-pattern? [subj-keys regexp]
   (some #(re-find regexp %) subj-keys))
 
@@ -506,6 +524,9 @@
    :required {:type-filter map?
               :validator check-required}
 
+   :exclusiveProperties {:type-filter map?
+                         :validator check-exclusive-props}
+
    :patternRequired {:type-filter map?
                      :validator check-pattern-required}
 
@@ -569,7 +590,6 @@
    :minLength (mk-bound-fn {:type-filter string?
                             :value-fn string-utf8-length
                             :operator >=})
-
 
    :minimum {:type-filter number?
              :validator (mk-minmax-validator :exclusiveMinimum > >=)}

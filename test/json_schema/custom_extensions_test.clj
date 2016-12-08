@@ -20,7 +20,7 @@
             :warnings []}
            (validate schema-1 {:type "Ups"})))
 
-    (is (= {:errors [],:warnings []}
+    (is (= nil
            (validate schema-1 {:type "User" :name "nicola"})))
 
     (is (= {:errors
@@ -40,3 +40,40 @@
            (validate schema-1 {:type "Role" :name "nicola"})))
 
     ))
+
+
+(def exclusive-schema
+  {:type "object"
+   :properties {:valueNumber {:type "number"}
+                :valueString {:type "string"}
+                :nested {:type "object"
+                         :properties {:otherValueNumber {:type "number"}
+                                      :otherValueString {:type "string"}}
+                         :exclusiveProperties [{:properties [:otherValueString :otherValueNumber] :required true}]}}
+   :required [:nested]
+   :exclusiveProperties [{:properties [:valueNumber :valueString] :required true}]})
+
+(deftest text-exclusive-props
+
+  (is (= {:errors
+          [{:expected
+            "Properties otherValueString,otherValueNumber are mutually exclusive",
+            :path [:nested]}
+           {:expected
+            "Properties valueNumber,valueString are mutually exclusive",
+            :path []}],
+          :warnings []}
+         (validate exclusive-schema {:valueNumber 1 :valueString "s"
+                                     :nested {:otherValueString "s" :otherValueNumber 1}})))
+
+  (is (= {:errors
+          [{:expected
+            "One of properties otherValueString,otherValueNumber is required",
+            :path [:nested]}
+           {:expected
+            "One of properties valueNumber,valueString is required",
+            :path []}],
+          :warnings []}
+         (validate exclusive-schema {:name "Name" :nested {:key "val"}})))
+
+  )
