@@ -5,6 +5,6 @@
             :url "http://www.eclipse.org/legal/epl-v10.html"}
   :resource-paths ["resources" "JSON-Schema-Test-Suite/tests"]
   :repositories   [["clojars"  {:url "https://clojars.org/repo" :sign-releases false}]]
-  :dependencies [[org.clojure/clojure "1.9.0-alpha12"]
+  :dependencies [[org.clojure/clojure "1.9.0-alpha14"]
                  [cheshire "5.6.3"]]
-  :profiles {:dev {:dependencies [[http-kit "2.1.19"]]}})
+  :profiles {:dev {:dependencies [[http-kit "2.2.0"]]}})
