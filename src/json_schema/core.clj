@@ -603,7 +603,10 @@
    :enum {:validator check-enum}
 
    :typeProperty {:type-filter map?
-                  :validator type-property}})
+                  :validator type-property}
+
+   :discriminator {:type-filter map?
+                   :validator type-property}})
 
 
 (defn warn-on-unknown-keys [key ctx]

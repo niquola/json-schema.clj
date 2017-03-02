@@ -14,6 +14,15 @@
                  :Role {:properties {:type {:constant "Role"}
                                      :name {:constant "admin"}}}}})
 
+(def schema-2
+  {:type "object"
+   :discriminator :type
+   :definitions {:User {:properties {:type {:constant "User"}
+                                     :name {:constant "nicola"}}}
+                 :Role {:properties {:type {:constant "Role"}
+                                     :name {:constant "admin"}}}}})
+
+
 (deftest test-errors
   (testing "path in error"
     (is (= {:errors [{:desc "Could not resolve #/definitions/Ups", :path []}],
@@ -38,6 +47,30 @@
               :path [:name]}],
             :warnings []}
            (validate schema-1 {:type "Role" :name "nicola"})))
+
+    (testing "with descrimintator: path in error"
+      (is (= {:errors [{:desc "Could not resolve #/definitions/Ups", :path []}],
+              :warnings []}
+             (validate schema-2 {:type "Ups"})))
+
+      (is (= nil
+             (validate schema-2 {:type "User" :name "nicola"})))
+
+      (is (= {:errors
+              [{:expected "ivan equals nicola",
+                :actual "not equal",
+                :details "ivan",
+                :path [:name]}],
+              :warnings []}
+             (validate schema-2 {:type "User" :name "ivan"})))
+
+      (is (= {:errors
+              [{:expected "nicola equals admin",
+                :actual "not equal",
+                :details "nicola",
+                :path [:name]}],
+              :warnings []}
+             (validate schema-2 {:type "Role" :name "nicola"}))))
 
     ))
 
