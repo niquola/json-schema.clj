@@ -110,3 +110,30 @@
          (validate exclusive-schema {:name "Name" :nested {:key "val"}})))
 
   )
+
+(def one-of-required-schema
+  {:type "object"
+   :additionalProperties false
+   :properties {:a {:type "string"}
+                :_a {:type "string"}
+                :b {:type "string"}
+                :c {:type "string"}
+                :_c {:type "string"}
+                }
+   :oneOfRequired [[:a :_a] :b [:c :_c]]})
+
+(deftest text-one-of-required
+
+  (is (nil? (validate one-of-required-schema {:a "a" :b "b" :c "c"})))
+  (is (nil? (validate one-of-required-schema {:_a "a" :b "b" :c "c"})))
+  (is (nil? (validate one-of-required-schema {:_a "a" :b "b" :_c "c"})))
+  (is (nil? (validate one-of-required-schema {:a "a" :b "b" :_c "c"})))
+
+  (is (= {:errors
+          [{:expected "one of properties a or _a is required",
+            :actual {:b "b", :c "c"},
+            :path []}],
+          :warnings []}
+         (validate one-of-required-schema {:b "b" :c "c"})))
+
+  )

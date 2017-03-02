@@ -186,9 +186,37 @@
                                              (add-error-on
                                               ctx
                                               (contains? subj (keyword required-key))
-                                              {:expected (str "field " required-key " is required")
+                                              {:expected (str "property " required-key " is required")
                                                :actual subj}))
                                            ctx resolved-requireds)
+      (nil? resolved-requireds) ctx
+      :else (add-error
+             ctx {:expected (str "required value should be array, but typeof " resolved-requireds "=" (type resolved-requireds))}))))
+
+(defn check-required-with-one-of [_ requireds schema subj ctx]
+  (let [resolved-requireds (resolve-$data ctx requireds)]
+    (cond
+      (is-array? resolved-requireds)
+      (reduce (fn [ctx key-or-vector]
+                (cond
+                  (keyword? key-or-vector)
+                  (add-error-on
+                   ctx
+                   (contains? subj (keyword key-or-vector))
+                   {:expected (str "property '" (name key-or-vector) "' is required")
+                    :actual subj})
+
+                  (vector? key-or-vector)
+                  (add-error-on
+                   ctx
+                   (some #(contains? subj (keyword %)) key-or-vector)
+                   {:expected (str "one of properties " (str/join " or " (mapv name key-or-vector)) " is required")
+                    :actual subj})
+
+                  :else (add-error ctx {:expected ("oneOfRequired expectes [key or [& keys]], but " key-or-vector)})
+                  ))
+              ctx resolved-requireds)
+
       (nil? resolved-requireds) ctx
       :else (add-error
              ctx {:expected (str "required value should be array, but typeof " resolved-requireds "=" (type resolved-requireds))}))))
@@ -221,7 +249,7 @@
               (add-error-on
                ctx
                (contains-pattern? subj-keys required-key)
-               {:expected (str "some fields should match " required-key " but " subj-keys)
+               {:expected (str "some properties should match " required-key " but " subj-keys)
                 :actual subj-keys}))
             ctx requireds-regexps)))
 
@@ -523,6 +551,9 @@
 
    :required {:type-filter map?
               :validator check-required}
+
+   :oneOfRequired {:type-filter map?
+                   :validator check-required-with-one-of}
 
    :exclusiveProperties {:type-filter map?
                          :validator check-exclusive-props}
