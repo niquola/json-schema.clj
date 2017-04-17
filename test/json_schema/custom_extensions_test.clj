@@ -137,3 +137,14 @@
          (validate one-of-required-schema {:b "b" :c "c"})))
 
   )
+
+(def keyword-support
+  {:type "object"
+   :properties {:a {:type "string"}}})
+
+(deftest test-keyword-support
+
+  (is (nil? (validate keyword-support {:a "string"})))
+  (is (nil? (validate keyword-support {:a :string})))
+
+  )

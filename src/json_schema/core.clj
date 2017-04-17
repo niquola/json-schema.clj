@@ -121,7 +121,7 @@
 (def basic-types
   {"object" map?
    "array" #(or (seq? %) (and (coll? %) (not (map? %))))
-   "string" string?
+   "string" #(or (string? %) (keyword? %))
    "number" number?
    "integer" integer?
    "boolean" #(instance? Boolean %)
