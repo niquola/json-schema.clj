@@ -112,7 +112,7 @@
 
 
 
-(defn string-utf8-length [x] (.count (.codePoints x)))
+(defn string-utf8-length [^java.lang.String x] (.count (.codePoints x)))
 
 (defn is-array? [x]
   (or (seq? x) (and (coll? x) (not (map? x)))))

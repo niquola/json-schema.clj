@@ -11,10 +11,17 @@
          (throw (Exception. (str "unable to parse \"" (pr-str x) "\" as uri"))))))
 
 (defn resolve-uri [base-uri uri]
+  ;; (println (pr-str "base:" base-uri " uri:" uri))
   (try
     (cond (nil? base-uri) uri
+          (str/blank? base-uri) uri
           (nil? uri) base-uri
-          (and base-uri uri) (str (.resolve (to-uri base-uri) uri)))
+          (and base-uri uri)
+
+          (let [^java.net.URI base (to-uri base-uri)]
+            (if (string? uri)
+              (str (.resolve base ^java.lang.String uri))
+              (str (.resolve base ^java.net.URI uri)))))
     (catch Exception e
       (println "Ups" base-uri uri)
       nil)))
@@ -26,12 +33,15 @@
         (str/replace #"%25" "%")))
 
 (defn json-pointer [obj pointer]
-  (let [path (mapv (fn [x] (if (re-matches #"\d+" x) (read-string x) (keyword (decode-json-pointer x))))
+  (let [path (mapv (fn [x] (if (re-find #"^\d+$" x)
+                             (Integer. ^java.lang.String x)
+                             (keyword (decode-json-pointer x))))
                    (rest (str/split pointer #"/")))]
     (get-in obj path)))
 
+
 (defn defragment-uri [ref]
-  (let [uri (to-uri ref)]
+  (let [^java.net.URI uri (to-uri ref)]
     (str/replace
      (str
       (java.net.URI. (.getScheme uri)
@@ -44,12 +54,16 @@
      #"#$" "")))
 
 (defn fragment [ref]
-  (or (.getFragment (to-uri ref)) ""))
+  (or 
+   (if (and ref (str/starts-with? ref "#"))
+     (last (str/split ref #"#"))
+     (.getFragment ^java.net.URI (to-uri ref)))
+   ""))
 
 (defragment-uri "http://x.y.z/rootschema.json#foo")
 
-(json-pointer {:a {:b 1}} (fragment (resolve-uri (defragment-uri "http://x.y.z/rootschema.json#foo")
-                        "/ups#/a/b")))
+;; (json-pointer {:a {:b 1}} (fragment (resolve-uri (defragment-uri "http://x.y.z/rootschema.json#foo")
+;;                         "/ups#/a/b")))
 
 (defn from-cache [ctx url]
   (when-not (get-in ctx [:docs ""])
@@ -69,7 +83,7 @@
   (update-in ctx [:base-uri] #(resolve-uri % uri)))
 
 (defn resolve-ref [ctx ref]
-  (let [ rref     (resolve-uri (:base-uri ctx) ref)
+  (let [rref  (resolve-uri (:base-uri ctx) ref)
         [doc ctx] (load-doc ctx rref)]
     [(json-pointer doc (fragment rref)) doc ctx]))
 
