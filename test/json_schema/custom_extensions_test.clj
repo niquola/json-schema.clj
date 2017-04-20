@@ -140,11 +140,14 @@
 
 (def keyword-support
   {:type "object"
-   :properties {:a {:type "string"}}})
+   :properties {:a {:type "string"}
+                :b {:type "string" :enum ["a" :b]}}})
 
 (deftest test-keyword-support
 
   (is (nil? (validate keyword-support {:a "string"})))
   (is (nil? (validate keyword-support {:a :string})))
+  (is (nil? (validate keyword-support {:b :a})))
+  (is (nil? (validate keyword-support {:b "b"})))
 
   )

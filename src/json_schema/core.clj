@@ -169,12 +169,20 @@
              (dissoc :_matched-props)))))
    ctx props))
 
+(defn json-compare [a b]
+  (cond
+    (and (string? a) (string? b))   (= a b)
+    (and (keyword? a) (keyword? b)) (= a b)
+    (and (string? a) (keyword? b)) (= a (name b))
+    (and (keyword? a) (string? b)) (= (name a) b)
+    :else (= a b)))
+
 (defn check-enum [_ enum schema subj ctx]
   (let [resolved-enum (resolve-$data ctx enum)]
     (add-error-on
      ctx
      (or (nil? resolved-enum)
-         (some (fn [v] (= (resolve-$data ctx v) subj)) resolved-enum))
+         (some (fn [v] (json-compare (resolve-$data ctx v) subj)) resolved-enum))
      {:expected (str "one of " resolved-enum)
       :actual subj})))
 
