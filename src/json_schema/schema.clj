@@ -1,9 +1,15 @@
 (ns json-schema.schema
   (:require [cheshire.core :as json]
             [clojure.set]
+            [json-schema.refs :as refs]
             [clojure.string :as str]))
 
 (declare compile)
+
+(defn decode-json-pointer [x]
+  (-> x (str/replace #"~0" "~")
+      (str/replace #"~1" "/")
+      (str/replace #"%25" "%")))
 
 (defn reduce-indexed 
   "Reduce while adding an index as the second argument to the function"
@@ -20,6 +26,39 @@
            fv (f init i v)]
        (recur f fv (inc i) (rest coll))))))
 
+(defn compile-pointer [ref]
+  (let [is-root-path (str/starts-with? ref "#")
+        is-return-key (str/ends-with? ref "#")
+        ref-path (->
+                  ref
+                  (str/replace #"(^#\/|#$)" "")
+                  (str/split #"/")
+                  (->>
+                   (mapv (fn [x]
+                           (if (re-matches #"^\d+$" x)
+                             (read-string x)
+                             (keyword (decode-json-pointer x)))))))]
+    (if is-root-path
+      (fn [ctx]
+        (get-in (:doc ctx) ref-path))
+      (if is-return-key
+        (fn [ctx]
+          (let [path (:path ctx)
+                steps-back (first ref-path)
+                ref-path (rest ref-path)
+                absolute-path (concat (drop-last steps-back path) ref-path)]
+            (last absolute-path)))
+        (fn [ctx]
+          (let [path (:path ctx)
+                steps-back (first ref-path)
+                ref-path (rest ref-path)
+                absolute-path (concat (drop-last steps-back path) ref-path)]
+            (println "pth" absolute-path)
+            (get-in (:doc ctx) absolute-path)))))))
+
+(defn $data-pointer [x]
+  (when-let [d (:$data x)] (compile-pointer d)))
+
 (defn add-error [ctx message]
   (update-in ctx [:errors] conj {:path (:path ctx) :message message}))
 
@@ -33,27 +72,33 @@
 
 (defmulti schema-key (fn [k opts schema path regisry] (if (= :default k) :schemaDefault k)))
 
+(defn build-ref [path]
+  (str "#"
+       (when (not (empty? path))
+         (->> path
+              (map (fn [x]
+                     (cond
+                       (string? x) x
+                       (keyword? x) (subs (str x) 1)
+                       :else (str x))))
+              (str/join "/")
+              (str "/")))))
 
 (defn- compile-schema [schema path registry]
   (let [schema-fn (if (map? schema)
-                    (let [validators (doall (reduce (fn [acc [k v]]
-                                                (if-let [vf (schema-key k v schema path registry)]
-                                                  (conj acc vf)
-                                                  acc)
-                                                ) [] (dissoc schema :title)))]
+                    (let [validators (doall
+                                      (reduce (fn [acc [k v]]
+                                                (let [v (or ($data-pointer v) v)] ;; check for $data
+                                                  (if-let [vf (schema-key k v schema path registry)]
+                                                    (conj acc vf)
+                                                    acc)))
+                                              [] (dissoc schema :title)))]
                       (fn [ctx v]
                         (let [pth (:path ctx)]
                           (reduce (fn [ctx vf] (vf (assoc ctx :path pth) v))
                                   ctx validators))))
                     (fn [ctx v] (add-error ctx (str "Invalid schema " schema))))]
-    (let [ref (str "#"
-                   (when (not (empty? path))
-                     (str "/" (str/join "/" (map (fn [x]
-                                                   (cond
-                                                     (string? x) x
-                                                     (keyword? x) (name x)
-                                                     :else (str x)))
-                                                 path)))))]
+    (let [ref (build-ref path)]
       ;; (println "register" ref)
       (swap! registry assoc ref schema-fn))
     schema-fn))
@@ -249,11 +294,19 @@
 (defmethod schema-key
   :minProperties
   [_ bound schema path registry]
-  (when (number? bound)
+  (cond
+    (number? bound)
     (fn [ctx v]
       (let [cnt (count v)]
         (if (and (map? v) (> bound cnt))
           (add-error ctx (str "expected number of properties " cnt " < " bound))
+          ctx)))
+    (fn? bound)
+    (fn [ctx v]
+      (let [$bound (bound ctx)
+            cnt (count v)]
+        (if (and (map? v) (> $bound cnt))
+          (add-error ctx (str "expected number of properties " cnt " < " $bound))
           ctx)))))
 
 (defn is-divider? [v d]
@@ -262,12 +315,19 @@
 (defmethod schema-key
   :multipleOf
   [_ bound schema path registry]
-  (when (number? bound)
+  (cond
+    (number? bound)
     (fn [ctx v]
       (if (and (number? v) (not (or (= 0 v) (is-divider? v bound))))
         (add-error ctx (str "expected " v " is multiple of " bound))
-        ctx)
-      )))
+        ctx))
+    (fn? bound)
+    (fn [ctx v]
+      (let [$bound (bound ctx)]
+        (if (and (number? v) (not (or (= 0 v) (is-divider? v $bound))))
+          (add-error ctx (str "expected " v " is multiple of " $bound))
+          ctx)))
+    :else nil))
 
 (defn json-compare [a b]
   (cond
@@ -280,10 +340,35 @@
 (defmethod schema-key
   :enum
   [_ enum schema path registry]
-  (fn [ctx v]
-    (if-not (some (fn [ev] (json-compare ev v)) enum)
-      (add-error ctx (str "expeceted one of " (str/join ", " enum)))
-      ctx)))
+  (if (fn? enum)
+    (fn [ctx v]
+      (let [$enum (enum ctx)]
+        (if-not (vector? $enum)
+          (if (nil? $enum)
+            ctx
+            (add-error ctx (str "could not enum by " $enum)))
+          (if-not (some (fn [ev] (json-compare ev v)) $enum)
+            (add-error ctx (str "expeceted one of " (str/join ", " $enum)))
+            ctx))))
+    (fn [ctx v]
+      (if-not (some (fn [ev] (json-compare ev v)) enum)
+        (add-error ctx (str "expeceted one of " (str/join ", " enum)))
+        ctx))))
+
+
+(defmethod schema-key
+  :constant
+  [_ const schema path registry]
+  (if (fn? const)
+    (fn [ctx v]
+      (let [$const (const ctx)]
+        (if-not (json-compare $const v)
+          (add-error ctx (str "expeceted " $const ", but " v))
+          ctx)))
+    (fn [ctx v]
+      (if-not (json-compare const v)
+        (add-error ctx (str "expeceted " const ", but " v))
+        ctx))))
 
 (defmethod schema-key
    :dependencies
@@ -448,10 +533,6 @@
   [_ items schema path registry]
   nil)
 
-(defn decode-json-pointer [x]
-  (-> x (str/replace #"~0" "~")
-      (str/replace #"~1" "/")
-      (str/replace #"%25" "%")))
 
 (decode-json-pointer "#/tilda~0field")
 
@@ -491,12 +572,21 @@
 (defmethod schema-key
   :minimum
   [_ bound {ex :exclusiveMinimum} path registry]
-  (when (number? bound)
+  (cond
+    (number? bound)
     (let [op (if ex > >=)]
       (fn [ctx v]
         (if (and (number? v) (not (op v bound)))
           (add-error ctx (str "expected " v " > " bound))
-          ctx)))))
+          ctx)))
+
+    (fn? bound)
+    (let [op (if ex > >=)]
+      (fn [ctx v]
+        (let [$bound (bound ctx)]
+          (if (and (number? v) (not (op v $bound)))
+            (add-error ctx (str "expected " v " > " $bound))
+            ctx))))))
 
 (defmethod schema-key
   :exclusiveMinimum
@@ -518,11 +608,20 @@
 (defmethod schema-key
   :minLength
   [_ bound schema path registry]
-  (when (number? bound)
+  (cond
+    (number? bound)
     (fn [ctx v]
       (let [cnt (and (string? v) (string-utf8-length v))]
         (if (and cnt (< cnt bound))
           (add-error ctx (str "expected string length " cnt " < " bound))
+          ctx)))
+
+    (fn? bound)
+    (fn [ctx v]
+      (let [$bound (bound ctx)
+            cnt (and (string? v) (string-utf8-length v))]
+        (if (and cnt (< cnt $bound))
+          (add-error ctx (str "expected string length " cnt " < " $bound))
           ctx)))))
 
 (defmethod schema-key
@@ -583,12 +682,22 @@
 (defmethod schema-key
   :format
   [_ fmt schema path registry]
-  (let [regex (get format-regexps (name fmt))]
-    (assert regex (str "no format for " fmt))
+  (if (fn? fmt)
     (fn [ctx v]
-      (if (and (string? v) (not (re-find regex v)))
-        (add-error ctx (str "expected format " fmt))
-        ctx))))
+      (if-let [$fmt (fmt ctx)]
+        (if-let [regex (get format-regexps (if (keyword? $fmt) (name $fmt) $fmt))]
+          (if (and (string? v) (not (re-find regex v)))
+            (add-error ctx (str "expected format " $fmt))
+            ctx)
+          (add-error ctx (str "no format for " $fmt)))
+        ctx))
+
+    (let [regex (get format-regexps (name fmt))]
+      (assert regex (str "no format for " fmt))
+      (fn [ctx v]
+        (if (and (string? v) (not (re-find regex v)))
+          (add-error ctx (str "expected format " fmt))
+          ctx)))))
 
 (defmethod schema-key
   :pattern
@@ -602,14 +711,39 @@
 (defmethod schema-key
   :minItems
   [_ bound {ai :additionalItems :as schema} path registry]
-  (when (number? bound)
+  (cond
+    (number? bound)
     (fn [ctx v]
       (if-not (vector? v)
         ctx
         (let [cnt (count v)]
           (if (< cnt bound)
             (add-error ctx (str "expected array length " cnt " < " bound))
+            ctx))))
+    (fn? bound)
+    (fn [ctx v]
+      (if-not (vector? v)
+        ctx
+        (let [$bound (bound ctx)
+              cnt (count v)]
+          (if (< cnt $bound)
+            (add-error ctx (str "expected array length " cnt " < " $bound))
             ctx))))))
+
+(defmethod schema-key
+  :contains
+  [_ subsch schema path registry]
+  (let [validator (compile-schema subsch path registry)]
+    (fn [ctx v]
+      (if (and (vector? v)
+               (not (some (fn [vv]
+                            (let [{err :errors} (validator (assoc ctx :errors []) vv)]
+                              (empty? err))
+                            ) v)))
+        (add-error ctx (str "expected contains " subsch))
+        ctx)
+
+      )))
 
 (defmethod schema-key
   :items
@@ -670,7 +804,7 @@
 (defn compile [schema]
   (let [vf (compile-schema schema [] (atom {}))
         ctx {:path [] :errors [] :deferreds [] :warnings []}]
-    (fn [v] (select-keys (vf ctx v) [:errors :warnings :deferreds]))))
+    (fn [v] (select-keys (vf (assoc ctx :doc v) v) [:errors :warnings :deferreds]))))
 
 (defn compile-registry [schema]
   (let [registry (atom {}) 
@@ -689,12 +823,17 @@
              :required [:email]}
             {:name 5})
 
-
   (validate {:oneOf [{:type "integer"} {:minimum 2}]} 1.5)
   (keys
    @(compile-registry
      {:items [{:type "integer"} {:$ref "#/items/0"}]}))
   )
+(validate {:constant 5} 5)
+(validate {:constant 5} 4)
 
 
 
+
+(validate
+ {:properties {:sameAs {:constant {:$data "1/thisOne"}}, :thisOne {}}}
+ {:sameAs 5, :thisOne 6})
