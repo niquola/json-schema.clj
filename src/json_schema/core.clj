@@ -23,7 +23,7 @@
   (update-in ctx [:path] conj k))
 
 (defn- pop-path [ctx]
-  (update-in ctx [:path] (fn [v] (into [] (butlast v)))))
+  (update-in ctx [:path] (fn [v] (vec (butlast v)))))
 
 (defn safe-parse-number [x]
   (cond
