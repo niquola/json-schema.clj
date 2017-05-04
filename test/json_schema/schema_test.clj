@@ -85,6 +85,5 @@
                   (pp {:result result :schema schema :case test-item})))))))))
 
 (deftest self-test
-  #_(let [core (read-json (.getPath (io/resource "core-schema.json")))]
-    (testing
-        (is (validate core core)))))
+  (let [core (read-json (.getPath (io/resource "core-schema.json")))]
+    (testing (is (validate core core)))))

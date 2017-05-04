@@ -36,19 +36,26 @@
 
 (defn- compile-schema [schema path registry]
   (let [schema-fn (if (map? schema)
-                    (let [validators (reduce (fn [acc [k v]]
-                                               (if-let [vf (schema-key k v schema path registry)]
-                                                 (conj acc vf)
-                                                 acc)
-                                               ) [] (dissoc schema :title))]
+                    (let [validators (doall (reduce (fn [acc [k v]]
+                                                (if-let [vf (schema-key k v schema path registry)]
+                                                  (conj acc vf)
+                                                  acc)
+                                                ) [] (dissoc schema :title)))]
                       (fn [ctx v]
                         (let [pth (:path ctx)]
                           (reduce (fn [ctx vf] (vf (assoc ctx :path pth) v))
                                   ctx validators))))
                     (fn [ctx v] (add-error ctx (str "Invalid schema " schema))))]
-    (swap! registry assoc (str "#"
-                               (when (not (empty? path))
-                                 (str "/" (str/join "/" (map name path))))) schema-fn)
+    (let [ref (str "#"
+                   (when (not (empty? path))
+                     (str "/" (str/join "/" (map (fn [x]
+                                                   (cond
+                                                     (string? x) x
+                                                     (keyword? x) (name x)
+                                                     :else (str x)))
+                                                 path)))))]
+      ;; (println "register" ref)
+      (swap! registry assoc ref schema-fn))
     schema-fn))
 
 (defmethod schema-type
@@ -202,7 +209,7 @@
   :type
   [k opts schema path regisry] 
   (if (vector? opts)
-    (let [validators (mapv (fn [o] (schema-type (keyword o))) opts)]
+    (let [validators (doall (mapv (fn [o] (schema-type (keyword o))) opts))]
       (fn [ctx v]
         (if (some
              (fn [validator]
@@ -218,9 +225,9 @@
   [_ props schema path registry]
   (when (map? props)
     (let [props-validators
-          (reduce (fn [acc [k v]]
-                    (assoc acc k (compile-schema v (into path [:properties (keyword k)]) registry)))
-                  {} props)]
+          (doall (reduce (fn [acc [k v]]
+                           (assoc acc k (compile-schema v (into path [:properties (keyword k)]) registry)))
+                         {} props))]
       (fn [ctx v]
         (let [pth (:path ctx)]
           (reduce (fn [ctx [k vf]]
@@ -283,17 +290,17 @@
    [_ props schema path registry]
    (assert (map? props))
    (let [props-validators
-         (reduce (fn [acc [k v]]
-                   (assoc acc k
-                          (cond
-                            (and (vector? v) (every? string? v)) (let [req-keys (map keyword v)]
-                                                                   (fn [ctx vv]
-                                                                     (if-not (every? #(contains? vv %) req-keys)
-                                                                       (add-error ctx (str req-keys " are required"))
-                                                                       ctx)))
-                            (map? v) (compile-schema v path registry)
-                            :else (fn [ctx v] ctx))))
-                 {} props)]
+         (doall (reduce (fn [acc [k v]]
+                    (assoc acc k
+                           (cond
+                             (and (vector? v) (every? string? v)) (let [req-keys (map keyword v)]
+                                                                    (fn [ctx vv]
+                                                                      (if-not (every? #(contains? vv %) req-keys)
+                                                                        (add-error ctx (str req-keys " are required"))
+                                                                        ctx)))
+                             (map? v) (compile-schema v (conj path :dependencies) registry)
+                             :else (fn [ctx v] ctx))))
+                  {} props))]
      (fn [ctx v]
        (if-not (map? v)
          ctx
@@ -308,9 +315,9 @@
   :patternProperties
   [_ props schema path registry]
   (let [props-map
-        (reduce (fn [acc [k v]]
-                  (assoc acc (re-pattern (name k)) (compile-schema v path registry)))
-                {} props)]
+        (doall (reduce (fn [acc [k v]]
+                         (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties) registry)))
+                       {} props))]
     (fn [ctx v]
       (if-not (map? v)
         ctx
@@ -330,7 +337,7 @@
 (defmethod schema-key
   :allOf
   [_ options schema path registry]
-  (let [validators (mapv (fn [o] (compile-schema o path registry)) options)]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :allOf) registry)) options))]
     (fn [ctx v]
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
@@ -339,7 +346,7 @@
 (defmethod schema-key
   :not
   [_ subschema schema path registry]
-  (let [validator (compile-schema subschema path registry)]
+  (let [validator (compile-schema subschema (conj path :not) registry)]
     (fn [ctx v]
       (let [{errs :errors} (validator (assoc ctx :errors []) v)]
         (if (empty? errs)
@@ -349,7 +356,7 @@
 (defmethod schema-key
   :anyOf
   [_ options schema path registry]
-  (let [validators (mapv (fn [o] (compile-schema o path registry)) options)]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :anyOf) registry)) options))]
     (fn [ctx v]
       (if (some (fn [validator]
                    (let [res (validator (assoc ctx :errors []) v)]
@@ -361,7 +368,7 @@
 (defmethod schema-key
   :oneOf
   [_ options schema path registry]
-  (let [validators (mapv (fn [o] (compile-schema o path registry)) options)]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :oneOf) registry)) options))]
     (fn [ctx v]
       (loop [cnt 0 validators validators]
         (cond
@@ -403,7 +410,7 @@
           ctx))
 
       (map? ap)
-      (let [ap-validator (compile-schema ap path registry)]
+      (let [ap-validator (compile-schema ap (conj path :additionalProperties) registry)]
         (fn [ctx v]
           (if (map? v)
             (let [v-keys (set (keys v))
@@ -537,7 +544,8 @@
   [k subschema schema path registry]
   (println "Unknown schema" k ": " subschema " " path)
   (when (and (empty? path) (map? subschema))
-    (compile-schema subschema (conj path k) registry)))
+    (compile-schema subschema (conj path k) registry))
+  nil)
 
 (defmethod schema-key
   :definitions
@@ -608,7 +616,7 @@
   [_ items {ai :additionalItems :as schema} path registry]
   (cond
     (map? items)
-    (let [validator (compile-schema items path registry)]
+    (let [validator (compile-schema items (conj path :items) registry)]
       (fn [ctx vs]
         (if-not (vector? vs)
           ctx
@@ -621,10 +629,10 @@
                ctx vs))))))
 
     (vector? items)
-    (let [validators (mapv (fn [x]
-                             (if (map? x)
-                               (compile-schema x path registry)
-                               (assert false (pr-str "Items:" items)))) items)
+    (let [validators (doall (map-indexed (fn [idx x]
+                                     (if (map? x)
+                                       (compile-schema x (into path [:items idx]) registry)
+                                       (assert false (pr-str "Items:" items)))) items))
           ai-validator (when-not (or (nil? ai) (boolean? ai)) (compile-schema ai path registry))]
       (fn [ctx vs]
         (if-not (vector? vs)
@@ -682,17 +690,11 @@
             {:name 5})
 
 
-
-
   (validate {:oneOf [{:type "integer"} {:minimum 2}]} 1.5)
-
   (keys
    @(compile-registry
-     {(keyword "tilda~field") {:type "integer"},
-      (keyword "slash/field") {:type "integer"},
-      :percent%field {:type "integer"},
-      :properties
-      {:tilda {:$ref "#/tilda~0field"},
-       :slash {:$ref "#/slash~1field"},
-       :percent {:$ref "#/percent%25field"}}})))
+     {:items [{:type "integer"} {:$ref "#/items/0"}]}))
+  )
+
+
 
