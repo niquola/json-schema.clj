@@ -553,40 +553,68 @@
           (validator ctx v)
           (add-error ctx (str "Could not resolve $ref " r)))))))
 
+(defn compile-bounded-check
+  [{value-applicable? :applicable-value
+    value-to-number :value-to-number
+    message :message
+    excl? :exclusive
+    bound :bound
+    excl-op :exclusive-op
+    op :inclusive-op
+    :as opts}]
+  (let [op (if excl? excl-op op)
+        op-msg (if excl? (:exclusive-msg opts) (:inclusive-msg opts))]
+    (cond
+      (number? bound)
+      (fn [ctx v]
+        (if (and (value-applicable? v) (not (op (value-to-number v)  bound)))
+          (add-error ctx (str "expected" message " " (value-to-number v) " > " bound))
+          ctx))
+
+      (fn? bound)
+      (fn [ctx v]
+        (let [$bound (bound ctx)]
+          (if (number? $bound)
+            (if (and (value-applicable? v) (not (op (value-to-number v) $bound)))
+              (add-error ctx (str "expected " message " " (value-to-number v) " " op-msg " " $bound))
+              ctx)
+            ctx))))))
 
 (defmethod schema-key
   :maximum
   [_ bound {ex :exclusiveMaximum} path registry]
-  (when (number? bound)
-    (let [op (if ex < <=)]
-      (fn [ctx v]
-        (if (and (number? v) (not (op v bound)))
-          (add-error ctx (str "expected " v " < " bound))
-          ctx)))))
+  (compile-bounded-check
+   {:applicable-value number?
+    :value-to-number identity
+    :message ""
+    :bound bound
+    :exclusive ex
+    :exclusive-msg "<"
+    :exclusive-op <
+    :inclusive-op <=
+    :inclusive-msg "<="}))
 
 (defmethod schema-key
   :exclusiveMaximum
   [_ bound schema path registry]
   nil)
 
+
+
 (defmethod schema-key
   :minimum
   [_ bound {ex :exclusiveMinimum} path registry]
-  (cond
-    (number? bound)
-    (let [op (if ex > >=)]
-      (fn [ctx v]
-        (if (and (number? v) (not (op v bound)))
-          (add-error ctx (str "expected " v " > " bound))
-          ctx)))
-
-    (fn? bound)
-    (let [op (if ex > >=)]
-      (fn [ctx v]
-        (let [$bound (bound ctx)]
-          (if (and (number? v) (not (op v $bound)))
-            (add-error ctx (str "expected " v " > " $bound))
-            ctx))))))
+  (compile-bounded-check
+   {:applicable-value number?
+    :value-to-number identity
+    :message ""
+    :bound bound
+    :exclusive ex
+    :exclusive-msg ">"
+    :exclusive-op >
+    :inclusive-op >=
+    :inclusive-msg ">"}) 
+  )
 
 (defmethod schema-key
   :exclusiveMinimum
@@ -598,31 +626,40 @@
 (defmethod schema-key
   :maxLength
   [_ bound schema path registry]
-  (when (number? bound)
-    (fn [ctx v]
-      (let [cnt (and (string? v) (string-utf8-length v))]
-        (if (and cnt (> cnt bound))
-          (add-error ctx (str "expected string length " cnt " > " bound))
-          ctx)))))
+  (compile-bounded-check
+   {:applicable-value string?
+    :value-to-number string-utf8-length
+    :message " string length "
+    :bound bound
+    :exclusive false
+    :exclusive-msg "<"
+    :exclusive-op <
+    :inclusive-op <=
+    :inclusive-msg "<="}))
 
 (defmethod schema-key
   :minLength
   [_ bound schema path registry]
-  (cond
-    (number? bound)
-    (fn [ctx v]
-      (let [cnt (and (string? v) (string-utf8-length v))]
-        (if (and cnt (< cnt bound))
-          (add-error ctx (str "expected string length " cnt " < " bound))
-          ctx)))
+  (compile-bounded-check
+   {:applicable-value string?
+    :value-to-number string-utf8-length
+    :message " string length "
+    :bound bound
+    :exclusive false
+    :exclusive-msg ">"
+    :exclusive-op >
+    :inclusive-op >=
+    :inclusive-msg ">="}))
 
-    (fn? bound)
-    (fn [ctx v]
-      (let [$bound (bound ctx)
-            cnt (and (string? v) (string-utf8-length v))]
-        (if (and cnt (< cnt $bound))
-          (add-error ctx (str "expected string length " cnt " < " $bound))
-          ctx)))))
+(defmethod schema-key
+  :formatMinimum
+  [_ bound schema path registry]
+  (assert false "TODO"))
+
+(defmethod schema-key
+  :formatMaximum
+  [_ bound schema path registry]
+  (assert false "TODO"))
 
 (defmethod schema-key
   :schemaDefault
@@ -656,15 +693,31 @@
 
 (defmethod schema-key
   :maxItems
-  [_ bound {ai :additionalItems :as schema} path registry]
-  (when (number? bound)
-    (fn [ctx v]
-      (if-not (vector? v)
-        ctx
-        (let [cnt (count v)]
-          (if (> cnt bound)
-            (add-error ctx (str "expected array length " cnt " > " bound))
-            ctx))))))
+  [_ bound schema path registry]
+  (compile-bounded-check
+   {:applicable-value vector?
+    :value-to-number count
+    :message " array length "
+    :bound bound
+    :exclusive false
+    :exclusive-msg "<"
+    :exclusive-op <
+    :inclusive-op <=
+    :inclusive-msg "<="}))
+
+(defmethod schema-key
+  :minItems
+  [_ bound schema path registry]
+  (compile-bounded-check
+   {:applicable-value vector?
+    :value-to-number count
+    :message " array length "
+    :bound bound
+    :exclusive false
+    :exclusive-msg ">"
+    :exclusive-op >
+    :inclusive-op >=
+    :inclusive-msg ">="}))
 
 (def format-regexps
   {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))$"
@@ -708,27 +761,7 @@
         (add-error ctx (str "expected format " fmt))
         ctx))))
 
-(defmethod schema-key
-  :minItems
-  [_ bound {ai :additionalItems :as schema} path registry]
-  (cond
-    (number? bound)
-    (fn [ctx v]
-      (if-not (vector? v)
-        ctx
-        (let [cnt (count v)]
-          (if (< cnt bound)
-            (add-error ctx (str "expected array length " cnt " < " bound))
-            ctx))))
-    (fn? bound)
-    (fn [ctx v]
-      (if-not (vector? v)
-        ctx
-        (let [$bound (bound ctx)
-              cnt (count v)]
-          (if (< cnt $bound)
-            (add-error ctx (str "expected array length " cnt " < " $bound))
-            ctx))))))
+
 
 (defmethod schema-key
   :contains
@@ -823,6 +856,8 @@
              :required [:email]}
             {:name 5})
 
+  (validate {:minimum 5} 3)
+
   (validate {:oneOf [{:type "integer"} {:minimum 2}]} 1.5)
   (keys
    @(compile-registry
@@ -832,8 +867,8 @@
 (validate {:constant 5} 4)
 
 
-
-
 (validate
  {:properties {:sameAs {:constant {:$data "1/thisOne"}}, :thisOne {}}}
  {:sameAs 5, :thisOne 6})
+
+(validate {:minimum 1.1, :exclusiveMinimum true} 1.1)
