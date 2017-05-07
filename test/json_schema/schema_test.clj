@@ -42,7 +42,6 @@
                    io/file
                    (.getPath))) fs))
 
-
 (defn read-json [path] (json/parse-string (slurp path) keyword))
 
 (defn pp [x] (with-out-str (pprint/pprint x)))

@@ -5,6 +5,7 @@
             [clojure.string :as str]))
 
 (declare compile)
+(declare compile-registry)
 
 (defn decode-json-pointer [x]
   (-> x (str/replace #"~0" "~")
@@ -13,6 +14,9 @@
 
 (defn num-comparator [a b]
   (cond (> a b) 1 (= a b) 0 :else -1))
+
+(defn add-error [ctx message]
+  (update-in ctx [:errors] conj {:path (:path ctx) :message message}))
 
 (defn reduce-indexed 
   "Reduce while adding an index as the second argument to the function"
@@ -42,8 +46,7 @@
                              (read-string x)
                              (keyword (decode-json-pointer x)))))))]
     (if is-root-path
-      (fn [ctx]
-        (get-in (:doc ctx) ref-path))
+      (fn [ctx] (get-in (:doc ctx) ref-path))
       (if is-return-key
         (fn [ctx]
           (let [path (:path ctx)
@@ -92,8 +95,7 @@
 (defn $data-pointer [x]
   (when-let [d (:$data x)] (compile-pointer d)))
 
-(defn add-error [ctx message]
-  (update-in ctx [:errors] conj {:path (:path ctx) :message message}))
+
 
 (defn add-warning [ctx message]
   (update-in ctx [:warning] conj {:path (:path ctx) :message message}))
@@ -709,25 +711,45 @@
 
 (decode-json-pointer "#/tilda~0field")
 
+(defn to-uri [x]
+  (try (java.net.URI. x)
+       (catch Exception e
+         (throw (Exception. (str "unable to parse \"" (pr-str x) "\" as uri"))))))
+
+(defn uri-and-fragment [x]
+  (when (string? x)
+    (when-let [uri (to-uri x)]
+      (let [fragment (.getFragment ^java.net.URI uri)
+            endpoint (if fragment
+                       (subs x 0 (- (count x) (count fragment) 1))
+                       x)]
+        [endpoint (str "#" fragment)]))))
+
+(uri-and-fragment "http://x.y.z/rootschema.json#foo")
+
+(uri-and-fragment "http://x.y.z/rootschema.json")
+
 (defmethod schema-key
   :$ref
   [_ r schema path registry]
   (let [r (decode-json-pointer r)]
     (if (str/starts-with? r "http")
-      (when (and  (not (contains? @registry r))) 
-        (when-let [res (try (slurp r) (catch Exception e))]
-          (swap! registry assoc r (compile (json/parse-string res keyword))))
-        (fn [ctx v]
-          (if-let [validator (get @registry r)]
-            (let [res (validator v)]
-              (assoc ctx :errors (into (:errors ctx) (:errors res)))))))
+      (let [[uri fragment] (uri-and-fragment r)]
+        (when-let [cache (or (get @registry uri)
+                           (when-let [res (try (slurp r) (catch Exception e))]
+                             (println "remote schema" res)
+                             (let [remote-registry (compile-registry (json/parse-string res keyword))]
+                               (println "reffs " (keys @remote-registry))
+                               (swap! registry assoc uri remote-registry)
+                               remote-registry)))]
+          (when-let [validator (get @cache fragment)]
+            (fn [ctx v]
+              (let [res (validator ctx v)]
+                (assoc ctx :errors (into (:errors ctx) (:errors res))))))))
       (fn [ctx v]
         (if-let [validator (get @registry r)]
           (validator ctx v)
           (add-error ctx (str "Could not resolve $ref " r)))))))
-
-
-
 
 (defmethod schema-key
   :maximum
@@ -1075,6 +1097,7 @@
     (fn [v] (select-keys (vf (assoc ctx :doc v) v) [:errors :warnings :deferreds]))))
 
 (defn compile-registry [schema]
+  (println "compile registyr" schema)
   (let [registry (atom {}) 
         vf (compile-schema schema [] registry)
         ctx {:path [] :errors [] :deferreds [] :warnings []}]
