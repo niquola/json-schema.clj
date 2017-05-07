@@ -11,6 +11,9 @@
       (str/replace #"~1" "/")
       (str/replace #"%25" "%")))
 
+(defn num-comparator [a b]
+  (cond (> a b) 1 (= a b) 0 :else -1))
+
 (defn reduce-indexed 
   "Reduce while adding an index as the second argument to the function"
   ([f coll]
@@ -53,8 +56,36 @@
                 steps-back (first ref-path)
                 ref-path (rest ref-path)
                 absolute-path (concat (drop-last steps-back path) ref-path)]
-            (println "pth" absolute-path)
             (get-in (:doc ctx) absolute-path)))))))
+
+(defn compile-comparator
+  [{value-applicable? :applicable-value
+    coerce-value      :coerce-value
+    bound-applicable? :applicable-bound
+    comparator-fn :comparator-fn
+    message :message
+    message-op :message-op
+    exclusive :exclusive
+    direction :direction
+    bound :bound}]
+  (fn [ctx v]
+    (let [$bound (if (fn? bound) (bound ctx) bound)
+          $exclusive (if (fn? exclusive) (exclusive ctx) exclusive)
+          op (if (= true $exclusive) < <=)]
+      (cond
+        (nil? $bound) ctx
+
+        (and (some? $bound) (not (bound-applicable? $bound)))
+        (add-error ctx (str " could not compare with " $bound))
+
+        (and (some? $exclusive) (not (boolean? $exclusive)))
+        (add-error ctx (str "exclusive flag should be boolean, got " $exclusive))
+
+        (and (value-applicable? v)
+               (bound-applicable? $bound)
+               (not (op 0 (* direction (comparator-fn $bound (coerce-value v))))))
+        (add-error ctx (str "expected" message " " (coerce-value v) message-op $bound))
+        :else ctx))))
 
 (defn $data-pointer [x]
   (when-let [d (:$data x)] (compile-pointer d)))
@@ -65,8 +96,8 @@
 (defn add-warning [ctx message]
   (update-in ctx [:warning] conj {:path (:path ctx) :message message}))
 
-(def schema-type nil)
-(def schema-key nil)
+;; (def schema-type nil)
+;; (def schema-key nil)
 
 (defmulti schema-type (fn [k] k))
 
@@ -284,33 +315,32 @@
 (defmethod schema-key
   :maxProperties
   [_ bound schema path registry]
-  (when (number? bound)
-    (fn [ctx v]
-      (let [cnt (count v)]
-        (if (and (map? v) (< bound cnt))
-          (add-error ctx (str "expected number of properties " cnt " > " bound))
-          ctx)))))
+  (compile-comparator
+   {:applicable-value map?
+    :coerce-value count
+    :applicable-bound number?
+    :comparator-fn num-comparator 
+    :message " number of properties "
+    :message-op " >= "
+    :direction 1
+    :bound bound}))
 
 (defmethod schema-key
   :minProperties
   [_ bound schema path registry]
-  (cond
-    (number? bound)
-    (fn [ctx v]
-      (let [cnt (count v)]
-        (if (and (map? v) (> bound cnt))
-          (add-error ctx (str "expected number of properties " cnt " < " bound))
-          ctx)))
-    (fn? bound)
-    (fn [ctx v]
-      (let [$bound (bound ctx)
-            cnt (count v)]
-        (if (and (map? v) (> $bound cnt))
-          (add-error ctx (str "expected number of properties " cnt " < " $bound))
-          ctx)))))
+  (compile-comparator
+   {:applicable-value map?
+    :coerce-value count
+    :applicable-bound number?
+    :comparator-fn num-comparator 
+    :message " number of properties "
+    :message-op " <= "
+    :direction -1
+    :bound bound}))
 
 (defn is-divider? [v d]
-  (re-matches #"^\d+(\.0)?$" (str (/ v d))))
+  (when (and (number? v) (number? d))
+    (re-matches #"^\d+(\.0)?$" (str (/ v d)))))
 
 (defmethod schema-key
   :multipleOf
@@ -324,9 +354,16 @@
     (fn? bound)
     (fn [ctx v]
       (let [$bound (bound ctx)]
-        (if (and (number? v) (not (or (= 0 v) (is-divider? v $bound))))
+        (cond
+          (nil? $bound) ctx
+
+          (and (some? $bound) (not (number? $bound)))
+          (add-error ctx (str "could not find multiple of " v " and " $bound))
+
+          (and (number? v) (not (or (= 0 v) (is-divider? v $bound))))
           (add-error ctx (str "expected " v " is multiple of " $bound))
-          ctx)))
+
+          :else ctx)))
     :else nil))
 
 (defn json-compare [a b]
@@ -420,6 +457,41 @@
            ctx v))))))
 
 (defmethod schema-key
+  :patternGroups
+  [_ props schema path registry]
+  (let [props-map
+        (doall (reduce (fn [acc [k {sch :schema :as g}]]
+                         (assoc acc (re-pattern (name k))
+                                (assoc g :schema (compile-schema sch (conj path :patternGroups) registry))))
+                       {} props))]
+    (fn [ctx v]
+      (if-not (map? v)
+        ctx
+        (reduce
+         (fn [ctx [pat {validator :schema min :minimum max :maximum}]]
+           (let [ctx (reduce
+                      (fn [ctx [k vv]]
+                        (let [pth (:path ctx)
+                              k-str (name k)
+                              new-ctx (assoc ctx :path (conj pth k))]
+                          (if (re-find pat k-str)
+                            (-> (validator new-ctx vv)
+                                (assoc :patternGroupCount (inc (:patternGroupCount ctx)))
+                                (assoc :path pth))
+                            ctx)))
+                      (assoc ctx :patternGroupCount 0) v)]
+             (cond
+               (and (nil? min) (nil? max)) ctx
+               (and (some? min) (and (< (:patternGroupCount ctx) min)))
+               (add-error ctx (str "patternGroup expects number of matched props " (:patternGroupCount ctx) " > " min))
+
+               (and (some? max) (and (> (:patternGroupCount ctx) max)))
+               (add-error ctx (str "patternGroup expects number of matched props " (:patternGroupCount ctx) " < " max))
+
+               :else ctx)))
+         ctx props-map)))))
+
+(defmethod schema-key
   :allOf
   [_ options schema path registry]
   (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :allOf) registry)) options))]
@@ -427,6 +499,59 @@
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
                 ctx validators)))))
+
+(defmethod schema-key
+  :switch
+  [_ switch schema path registry]
+  (let [clauses (->> switch
+                     (mapv (fn [clause]
+                             (assoc clause
+                                    :compiled
+                                    (cond-> {}
+                                      (:if clause) (assoc :if (compile-schema (:if clause) path registry))
+                                      (and (:then clause) (map? (:then clause)))
+                                      (assoc :then (compile-schema (:then clause) path registry))))))
+                     doall)]
+    (fn [ctx v]
+      (let [pth (:path ctx)]
+        (loop [ctx ctx
+               [cl & cls] clauses]
+          (cond (nil? cl) ctx
+
+                (:if cl)
+                (let [if-validator (get-in cl [:compiled :if])
+                      {errs :errors} (if-validator ctx v)]
+                  (if (empty? errs)
+                    (let [next-ctx (cond
+                                    (= false (:then cl))
+                                    (add-error ctx (str "expected not matches " (:if cl)))
+
+                                    (= true (:then cl))
+                                    ctx
+
+                                    (map? (:then cl))
+                                    ;; todo handle continue
+                                    ((get-in cl [:compiled :then]) ctx v)
+
+                                    :else ctx)]
+                      (if (:continue cl)
+                        (recur next-ctx cls)
+                        next-ctx))
+                    (recur ctx cls)))
+
+                (contains? cl :then)
+                (cond
+                  (= false (:then cl))
+                  (add-error ctx "switch failed - nothing matched")
+
+                  (= true (:then cl))
+                  ctx
+
+                  (map? (:then cl))
+                  (let [then-validator (get-in cl [:compiled :then])]
+                    (then-validator ctx v)))
+
+                :else (recur ctx cls)))))))
 
 (defmethod schema-key
   :not
@@ -474,9 +599,14 @@
 
 (defmethod schema-key
   :additionalProperties
-  [_ ap {props :properties  pat-props :patternProperties :as schema} path registry]
+  [_ ap {props :properties
+         pat-props :patternProperties
+         pat-g-props :patternGroups
+         :as schema} path registry]
   (let [props-keys (set (keys props))
-        pat-props-regex (->> pat-props keys (map (fn [x] (re-pattern (name x)))))
+        pat-props-regex (->> (keys (or pat-props {}))
+                             (concat (keys (or pat-g-props {})))
+                             (map (fn [x] (re-pattern (name x)))))
         is-path-prop? (fn [k] (let [k-str (name k)] (some #(re-find % k-str) pat-props-regex)))]
     (cond
       (= false ap)
@@ -516,16 +646,57 @@
 (defmethod schema-key
   :required
   [_ props schema path registry]
-  (assert (vector? props))
-  (fn [ctx v]
-    (if (map? v)
-      (let [pth (:path ctx)]
-        (reduce (fn [ctx k]
-                  (if (contains? v (keyword k))
-                    ctx
-                    (add-error ctx (str "Property " (name k) " is required"))))
-                ctx props))
-      ctx)))
+  (cond
+    (vector? props)
+    (fn [ctx v]
+      (if (map? v)
+        (let [pth (:path ctx)]
+          (reduce (fn [ctx k]
+                    (if (contains? v (keyword k))
+                      ctx
+                      (add-error ctx (str "Property " (name k) " is required"))))
+                  ctx props))
+        ctx))
+
+    (fn? props)
+    (fn [ctx v]
+      (let [$props (props ctx)]
+        (cond
+          (nil? $props) ctx
+
+          (not (vector? $props))
+          (add-error ctx (str "expected array of strings, but " $props))
+
+          (map? v)
+          (let [pth (:path ctx)]
+            (reduce (fn [ctx k]
+                      (if (contains? v (keyword k))
+                        ctx
+                        (add-error ctx (str "Property " (name k) " is required"))))
+                    ctx $props))
+          :else ctx)))))
+
+(defmethod schema-key
+  :patternRequired
+  [_ props schema path registry]
+  (cond
+    (vector? props)
+    (let [re-props (set (map (fn [x] (re-pattern (name x))) props))]
+      (fn [ctx v]
+        (if-not (map? v)
+          ctx
+          (let [not-matched-pats (reduce
+                                  (fn [left-parts k]
+                                    (let [k-str (name k)]
+                                      (reduce (fn [acc p]
+                                                (if-not (re-find p k-str)
+                                                  (conj acc p)
+                                                  acc))
+                                              #{} left-parts)))
+                                  re-props (keys v))]
+            (if-not (empty? not-matched-pats)
+              (add-error ctx (str "no properites, which matches " not-matched-pats))
+              ctx)))))))
 
 ;; handled in items
 (defmethod schema-key
@@ -553,46 +724,23 @@
           (validator ctx v)
           (add-error ctx (str "Could not resolve $ref " r)))))))
 
-(defn compile-bounded-check
-  [{value-applicable? :applicable-value
-    value-to-number :value-to-number
-    message :message
-    excl? :exclusive
-    bound :bound
-    excl-op :exclusive-op
-    op :inclusive-op
-    :as opts}]
-  (let [op (if excl? excl-op op)
-        op-msg (if excl? (:exclusive-msg opts) (:inclusive-msg opts))]
-    (cond
-      (number? bound)
-      (fn [ctx v]
-        (if (and (value-applicable? v) (not (op (value-to-number v)  bound)))
-          (add-error ctx (str "expected" message " " (value-to-number v) " > " bound))
-          ctx))
 
-      (fn? bound)
-      (fn [ctx v]
-        (let [$bound (bound ctx)]
-          (if (number? $bound)
-            (if (and (value-applicable? v) (not (op (value-to-number v) $bound)))
-              (add-error ctx (str "expected " message " " (value-to-number v) " " op-msg " " $bound))
-              ctx)
-            ctx))))))
+
 
 (defmethod schema-key
   :maximum
   [_ bound {ex :exclusiveMaximum} path registry]
-  (compile-bounded-check
-   {:applicable-value number?
-    :value-to-number identity
-    :message ""
-    :bound bound
-    :exclusive ex
-    :exclusive-msg "<"
-    :exclusive-op <
-    :inclusive-op <=
-    :inclusive-msg "<="}))
+  (let [ex (or ($data-pointer ex) ex)]
+    (compile-comparator
+     {:applicable-value number?
+      :coerce-value identity
+      :applicable-bound number?
+      :comparator-fn num-comparator 
+      :message ""
+      :message-op " < "
+      :exclusive ex
+      :direction 1
+      :bound bound})))
 
 (defmethod schema-key
   :exclusiveMaximum
@@ -600,66 +748,89 @@
   nil)
 
 
-
 (defmethod schema-key
   :minimum
   [_ bound {ex :exclusiveMinimum} path registry]
-  (compile-bounded-check
-   {:applicable-value number?
-    :value-to-number identity
-    :message ""
-    :bound bound
-    :exclusive ex
-    :exclusive-msg ">"
-    :exclusive-op >
-    :inclusive-op >=
-    :inclusive-msg ">"}) 
-  )
+  (let [ex (or ($data-pointer ex) ex)]
+    (compile-comparator
+     {:applicable-value number?
+      :coerce-value identity
+      :applicable-bound number?
+      :comparator-fn num-comparator 
+      :message ""
+      :message-op " > "
+      :exclusive ex
+      :direction -1
+      :bound bound})))
+
 
 (defmethod schema-key
   :exclusiveMinimum
   [_ bound schema path registry]
   nil)
 
-(defn string-utf8-length [^java.lang.String x] (.count (.codePoints x)))
+
+(defn string-utf8-length [x]
+  (when (string? x)
+    (.count (.codePoints ^java.lang.String x))))
 
 (defmethod schema-key
   :maxLength
   [_ bound schema path registry]
-  (compile-bounded-check
+  (compile-comparator
    {:applicable-value string?
-    :value-to-number string-utf8-length
+    :coerce-value string-utf8-length
+    :applicable-bound number?
+    :comparator-fn num-comparator 
     :message " string length "
-    :bound bound
-    :exclusive false
-    :exclusive-msg "<"
-    :exclusive-op <
-    :inclusive-op <=
-    :inclusive-msg "<="}))
+    :message-op " < "
+    :direction 1
+    :bound bound}))
 
 (defmethod schema-key
   :minLength
   [_ bound schema path registry]
-  (compile-bounded-check
+  (compile-comparator
    {:applicable-value string?
-    :value-to-number string-utf8-length
+    :coerce-value string-utf8-length
+    :applicable-bound number?
+    :comparator-fn num-comparator 
     :message " string length "
-    :bound bound
-    :exclusive false
-    :exclusive-msg ">"
-    :exclusive-op >
-    :inclusive-op >=
-    :inclusive-msg ">="}))
+    :message-op " > "
+    :direction -1
+    :bound bound}))
 
-(defmethod schema-key
-  :formatMinimum
-  [_ bound schema path registry]
-  (assert false "TODO"))
+
 
 (defmethod schema-key
   :formatMaximum
-  [_ bound schema path registry]
-  (assert false "TODO"))
+  [_ bound {ex :exclusiveFormatMaximum} path registry]
+  (let [ex (or ($data-pointer ex) ex)]
+    (compile-comparator
+     {:applicable-value string?
+      :coerce-value identity
+      :applicable-bound string?
+      :comparator-fn compare
+      :message " value "
+      :message-op " <= "
+      :direction 1
+      :exclusive ex
+      :bound bound})))
+
+(defmethod schema-key
+  :formatMinimum
+  [_ bound {ex :exclusiveFormatMinimum} path registry]
+  (let [ex (or ($data-pointer ex) ex)]
+    (compile-comparator
+     {:applicable-value string?
+      :coerce-value identity
+      :applicable-bound string?
+      :comparator-fn compare
+      :message " value "
+      :message-op " >= "
+      :exclusive ex
+      :direction -1
+      :bound bound})))
 
 (defmethod schema-key
   :schemaDefault
@@ -669,11 +840,29 @@
 
 (defmethod schema-key
   :uniqueItems
-  [k subschema schema path registry]
-  (fn [ctx v]
-    (if (and (vector? v) (not (= (count v) (count (set v)))))
-      (add-error ctx "expected unique items")
-      ctx)))
+  [k uniq schema path registry]
+  (cond
+    (= true uniq)
+    (fn [ctx v]
+      (if (and (vector? v) (not (= (count v) (count (set v)))))
+        (add-error ctx "expected unique items")
+        ctx))
+
+    (fn? uniq)
+    (fn [ctx v]
+      (let [$uniq (uniq ctx)]
+        (cond
+          (nil? $uniq) ctx
+
+          (not (boolean? $uniq))
+          (add-error ctx (str "uniq flag ref should be boolean, but " $uniq))
+
+          (= false $uniq) ctx
+
+          (and (vector? v) (not (= (count v) (count (set v)))))
+          (add-error ctx "expected unique items")
+
+          :else ctx)))))
 
 (defmethod schema-key
   :default
@@ -681,6 +870,12 @@
   (println "Unknown schema" k ": " subschema " " path)
   (when (and (empty? path) (map? subschema))
     (compile-schema subschema (conj path k) registry))
+  nil)
+
+(defmethod schema-key
+  :description
+  [k desc schema path registry]
+  ;; nop
   nil)
 
 (defmethod schema-key
@@ -694,30 +889,28 @@
 (defmethod schema-key
   :maxItems
   [_ bound schema path registry]
-  (compile-bounded-check
+  (compile-comparator
    {:applicable-value vector?
-    :value-to-number count
-    :message " array length "
-    :bound bound
-    :exclusive false
-    :exclusive-msg "<"
-    :exclusive-op <
-    :inclusive-op <=
-    :inclusive-msg "<="}))
+    :coerce-value count
+    :applicable-bound number?
+    :comparator-fn num-comparator 
+    :message " array lenght "
+    :message-op " >= "
+    :direction 1
+    :bound bound}))
 
 (defmethod schema-key
   :minItems
   [_ bound schema path registry]
-  (compile-bounded-check
+  (compile-comparator
    {:applicable-value vector?
-    :value-to-number count
-    :message " array length "
-    :bound bound
-    :exclusive false
-    :exclusive-msg ">"
-    :exclusive-op >
-    :inclusive-op >=
-    :inclusive-msg ">="}))
+    :coerce-value count
+    :applicable-bound number?
+    :comparator-fn num-comparator 
+    :message " array lenght "
+    :message-op " <= "
+    :direction -1
+    :bound bound}))
 
 (def format-regexps
   {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))$"
@@ -755,11 +948,27 @@
 (defmethod schema-key
   :pattern
   [_ fmt schema path registry]
-  (let [regex (re-pattern fmt)]
+  (cond
+    (string? fmt)
+    (let [regex (re-pattern fmt)]
+      (fn [ctx v]
+        (if (and (string? v) (not (re-find regex v)))
+          (add-error ctx (str "expected format " fmt))
+          ctx)))
+
+    (fn? fmt)
     (fn [ctx v]
-      (if (and (string? v) (not (re-find regex v)))
-        (add-error ctx (str "expected format " fmt))
-        ctx))))
+      (let [$fmt (fmt ctx)]
+        (cond
+          (nil? $fmt) ctx
+
+          (not (or (string? $fmt) (keyword? $fmt)))
+          (add-error ctx (str "could not interpret as pattern " $fmt))
+
+          (and (string? v) (not (re-find (re-pattern (name $fmt)) v)))
+          (add-error ctx (str "expected '" v "' matches pattern '" $fmt "'"))
+
+          :else ctx)))))
 
 
 
@@ -871,4 +1080,54 @@
  {:properties {:sameAs {:constant {:$data "1/thisOne"}}, :thisOne {}}}
  {:sameAs 5, :thisOne 6})
 
+
 (validate {:minimum 1.1, :exclusiveMinimum true} 1.1)
+(validate {:maximum 1.1, :exclusiveMaximum true} 1.1)
+(validate {:minimum 1.1, :exclusiveMinimum true} 1.0)
+
+(validate {:maximum 1.1, :exclusiveMaximum true} 1.2)
+
+(validate {:maximum 1.1} 1.1)
+(validate {:minimum 2} 1.1)
+
+(validate {:maximum 1} 1.1)
+
+(validate {:minimum 1.1} 1.1)
+
+(num-comparator 1.1 1.1)
+(num-comparator 1.2 1.1)
+
+(num-comparator 0.9 1.1)
+
+(compare "2014-12-03" "2015-08-17")
+
+(validate {:maxLength 2} "aaa")
+
+(validate {:maxLength 2} "aaa")
+
+(validate {:minimum 25} 20)
+
+(validate
+ {:properties
+  {:finalDate {:format "date", :formatMaximum {:$data "1/beforeThan"}},
+   :beforeThan {}}}
+ {:finalDate "2015-11-09", :beforeThan "2015-08-17"})
+
+
+(validate
+ {:properties {:shouldMatch {}, :string {:pattern {:$data "1/shouldMatch"}}}}
+ {:shouldMatch "^a*$", :string "abc"})
+
+(validate
+ {:switch
+  [{:if {:minimum 10}, :then {:multipleOf 2}, :continue true}
+   {:if {:minimum 20}, :then {:multipleOf 5}}]}
+ 35)
+
+(validate {:description "positive integer <=1000 with one non-zero digit",
+           :switch [{:if {:not {:minimum 1}} :then false}
+                    {:if {:maximum 10} :then true}
+                    {:if {:maximum 100} :then {:multipleOf 10}}
+                    {:if {:maximum 1000} :then {:multipleOf 100}}
+                    {:then false}]} 1001)
+
