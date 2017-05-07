@@ -61,6 +61,7 @@
 (defn compile-comparator
   [{value-applicable? :applicable-value
     coerce-value      :coerce-value
+    coerce-bound      :coerce-bound
     bound-applicable? :applicable-bound
     comparator-fn :comparator-fn
     message :message
@@ -70,6 +71,7 @@
     bound :bound}]
   (fn [ctx v]
     (let [$bound (if (fn? bound) (bound ctx) bound)
+          $bound (if (and (fn? coerce-bound) (some? $bound)) (coerce-bound $bound) $bound)
           $exclusive (if (fn? exclusive) (exclusive ctx) exclusive)
           op (if (= true $exclusive) < <=)]
       (cond
@@ -801,36 +803,60 @@
     :bound bound}))
 
 
+(defmulti compile-format-coerce (fn [fmt] fmt))
+
+(defmethod compile-format-coerce
+  :date [_]
+  identity)
+
+(defmethod compile-format-coerce
+  :datetime [_]
+  identity)
+
+(defmethod compile-format-coerce
+  :time [_]
+  (fn [v] (str/replace v #"(Z|[+-]\d+:\d+)$" ""))) 
+
+(defmethod compile-format-coerce
+  :default [_]
+  identity) 
+  
+((compile-format-coerce :time)
+ "13:15:17.000+01:00")
 
 (defmethod schema-key
   :formatMaximum
-  [_ bound {ex :exclusiveFormatMaximum} path registry]
-  (let [ex (or ($data-pointer ex) ex)]
-    (compile-comparator
-     {:applicable-value string?
-      :coerce-value identity
-      :applicable-bound string?
-      :comparator-fn compare
-      :message " value "
-      :message-op " <= "
-      :direction 1
-      :exclusive ex
-      :bound bound})))
+  [_ bound {fmt :format ex :exclusiveFormatMaximum} path registry]
+  (when-not (= "unknown" fmt)
+    (let [ex (or ($data-pointer ex) ex)]
+      (compile-comparator
+       {:applicable-value string?
+        :coerce-value (compile-format-coerce (keyword fmt))
+        :coerce-bound (compile-format-coerce (keyword fmt))
+        :applicable-bound string?
+        :comparator-fn compare
+        :message " value "
+        :message-op " <= "
+        :direction 1
+        :exclusive ex
+        :bound bound}))))
 
 (defmethod schema-key
   :formatMinimum
-  [_ bound {ex :exclusiveFormatMinimum} path registry]
-  (let [ex (or ($data-pointer ex) ex)]
-    (compile-comparator
-     {:applicable-value string?
-      :coerce-value identity
-      :applicable-bound string?
-      :comparator-fn compare
-      :message " value "
-      :message-op " >= "
-      :exclusive ex
-      :direction -1
-      :bound bound})))
+  [_ bound {fmt :format ex :exclusiveFormatMinimum} path registry]
+  (when-not (= "unknown" fmt)
+    (let [ex (or ($data-pointer ex) ex)]
+      (compile-comparator
+       {:applicable-value string?
+        :coerce-value (compile-format-coerce (keyword fmt))
+        :coerce-bound (compile-format-coerce (keyword fmt))
+        :applicable-bound string?
+        :comparator-fn compare
+        :message " value "
+        :message-op " >= "
+        :exclusive ex
+        :direction -1
+        :bound bound}))))
 
 (defmethod schema-key
   :schemaDefault
@@ -1058,6 +1084,11 @@
   (let [validator (compile schema)]
     (validator value)))
 
+(validate
+ {:properties
+  {:finalDate {:format "date", :formatMaximum {:$data "1/beforeThan"}},
+   :beforeThan {}}}
+ {:finalDate "2015-11-09", :beforeThan "2015-08-17"})
 
 (comment
   (validate {:type :object
@@ -1071,63 +1102,65 @@
   (keys
    @(compile-registry
      {:items [{:type "integer"} {:$ref "#/items/0"}]}))
+
+  (validate {:constant 5} 5)
+  (validate {:constant 5} 4)
+
+
+  (validate
+   {:properties {:sameAs {:constant {:$data "1/thisOne"}}, :thisOne {}}}
+   {:sameAs 5, :thisOne 6})
+
+
+  (validate {:minimum 1.1, :exclusiveMinimum true} 1.1)
+  (validate {:maximum 1.1, :exclusiveMaximum true} 1.1)
+  (validate {:minimum 1.1, :exclusiveMinimum true} 1.0)
+
+  (validate {:maximum 1.1, :exclusiveMaximum true} 1.2)
+
+  (validate {:maximum 1.1} 1.1)
+  (validate {:minimum 2} 1.1)
+
+  (validate {:maximum 1} 1.1)
+
+  (validate {:minimum 1.1} 1.1)
+
+  (num-comparator 1.1 1.1)
+  (num-comparator 1.2 1.1)
+
+  (num-comparator 0.9 1.1)
+
+  (compare "2014-12-03" "2015-08-17")
+
+  (validate {:maxLength 2} "aaa")
+
+  (validate {:maxLength 2} "aaa")
+
+  (validate {:minimum 25} 20)
+
+  (validate
+   {:properties
+    {:finalDate {:format "date", :formatMaximum {:$data "1/beforeThan"}},
+     :beforeThan {}}}
+   {:finalDate "2015-11-09", :beforeThan "2015-08-17"})
+
+
+  (validate
+   {:properties {:shouldMatch {}, :string {:pattern {:$data "1/shouldMatch"}}}}
+   {:shouldMatch "^a*$", :string "abc"})
+
+  (validate
+   {:switch
+    [{:if {:minimum 10}, :then {:multipleOf 2}, :continue true}
+     {:if {:minimum 20}, :then {:multipleOf 5}}]}
+   35)
+
+  (validate {:description "positive integer <=1000 with one non-zero digit",
+             :switch [{:if {:not {:minimum 1}} :then false}
+                      {:if {:maximum 10} :then true}
+                      {:if {:maximum 100} :then {:multipleOf 10}}
+                      {:if {:maximum 1000} :then {:multipleOf 100}}
+                      {:then false}]} 1001)
+
+
   )
-(validate {:constant 5} 5)
-(validate {:constant 5} 4)
-
-
-(validate
- {:properties {:sameAs {:constant {:$data "1/thisOne"}}, :thisOne {}}}
- {:sameAs 5, :thisOne 6})
-
-
-(validate {:minimum 1.1, :exclusiveMinimum true} 1.1)
-(validate {:maximum 1.1, :exclusiveMaximum true} 1.1)
-(validate {:minimum 1.1, :exclusiveMinimum true} 1.0)
-
-(validate {:maximum 1.1, :exclusiveMaximum true} 1.2)
-
-(validate {:maximum 1.1} 1.1)
-(validate {:minimum 2} 1.1)
-
-(validate {:maximum 1} 1.1)
-
-(validate {:minimum 1.1} 1.1)
-
-(num-comparator 1.1 1.1)
-(num-comparator 1.2 1.1)
-
-(num-comparator 0.9 1.1)
-
-(compare "2014-12-03" "2015-08-17")
-
-(validate {:maxLength 2} "aaa")
-
-(validate {:maxLength 2} "aaa")
-
-(validate {:minimum 25} 20)
-
-(validate
- {:properties
-  {:finalDate {:format "date", :formatMaximum {:$data "1/beforeThan"}},
-   :beforeThan {}}}
- {:finalDate "2015-11-09", :beforeThan "2015-08-17"})
-
-
-(validate
- {:properties {:shouldMatch {}, :string {:pattern {:$data "1/shouldMatch"}}}}
- {:shouldMatch "^a*$", :string "abc"})
-
-(validate
- {:switch
-  [{:if {:minimum 10}, :then {:multipleOf 2}, :continue true}
-   {:if {:minimum 20}, :then {:multipleOf 5}}]}
- 35)
-
-(validate {:description "positive integer <=1000 with one non-zero digit",
-           :switch [{:if {:not {:minimum 1}} :then false}
-                    {:if {:maximum 10} :then true}
-                    {:if {:maximum 100} :then {:multipleOf 10}}
-                    {:if {:maximum 1000} :then {:multipleOf 100}}
-                    {:then false}]} 1001)
-
