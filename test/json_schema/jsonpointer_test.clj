@@ -1,6 +1,6 @@
 (ns json-schema.jsonpointer-test
   (:require
-   [json-schema.schema :as sut]
+   [json-schema.core :as sut]
    [clojure.test :refer :all]))
 
 

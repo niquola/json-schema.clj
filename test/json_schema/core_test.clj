@@ -32,8 +32,8 @@
        io/resource
        io/file
        file-seq
-       (filter #(.isFile %))
-       (map #(.getPath %))
+       (filter #(.isFile ^java.io.File %))
+       (map #(.getPath ^java.io.File %))
        (filter (filter-by-name re-filter))))
 
 (defn files-list [fs]
@@ -41,7 +41,6 @@
                    io/resource
                    io/file
                    (.getPath))) fs))
-
 
 (defn read-json [path] (json/parse-string (slurp path) keyword))
 
@@ -52,35 +51,31 @@
     (let [test-case (read-json test-file)]
       (doseq [{:keys [schema tests description] :as scenario} test-case]
         (testing description
-          (doseq [{:keys [data valid] :as test-item} tests]
-            (let [result (validate  schema data)]
-              (is (= valid (empty? (:errors result)))
-                  (pp {:result result :schema schema :case test-item})))))))))
+          ;; (println "Test:" description)
+          ;; (println "Schema: " schema)
+          (let [validator (compile schema)]
 
-(deftest a-schema-test
+            (doseq [{:keys [data valid] :as test-item} tests]
+              (let [result (validator  data)]
+                ;; (println test-item)
+                (is (= valid (empty? (:errors result)))
+                    (pp {:result result :schema schema :case test-item}))))))))))
+
+(deftest draft3-test
+  (test-files (files "draft3" re-filter)))
+
+(deftest draft4-test
   (test-files (files "draft4" re-filter)))
 
 (deftest custom-tests
   (test-files (files "custom-scenarios" re-filter)))
 
-(def v5-files (files "v5" re-filter))
+(deftest v5-tests
+  (test-files (files "v5" re-filter)))
 
-(deftest v5-schema-test
-  (doseq [test-file v5-files]
-    (let [test-case (read-json test-file)]
-      (doseq [{:keys [schema tests description] :as scenario} test-case]
-        (testing description
-          (doseq [{:keys [data valid] :as test-item} tests]
-            (let [result (validate  schema data)]
-              (when-not (= valid (empty? (:errors result)))
-                (println " res: " result)
-                (println " item: " test-item)
-                (println " sch: " schema))
-              (is (= valid (empty? (:errors result)))
-                  (pp {:result result :schema schema :case test-item})))))))))
+(deftest draft6-test
+  (test-files (files "draft6" re-filter)))
 
 (deftest self-test
   (let [core (read-json (.getPath (io/resource "core-schema.json")))]
-    (testing
-        (is (valid? core core)))))
-
+    (testing (is (validate core core)))))

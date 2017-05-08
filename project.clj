@@ -10,5 +10,5 @@
   :dependencies [[org.clojure/clojure "1.9.0-alpha14"]
                  [cheshire "5.6.3"]]
 
-  :profiles {:dev {:warn-on-reflection true
+  :profiles {:dev {;;:warn-on-reflection true
                    :dependencies [[http-kit "2.2.0"]]}})

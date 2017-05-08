@@ -8,69 +8,25 @@
 
 (def schema-1
   {:type "object"
-   :typeProperty :type
-   :definitions {:User {:properties {:type {:constant "User"}
-                                     :name {:constant "nicola"}}}
-                 :Role {:properties {:type {:constant "Role"}
-                                     :name {:constant "admin"}}}}})
-
-(def schema-2
-  {:type "object"
    :discriminator :type
    :definitions {:User {:properties {:type {:constant "User"}
                                      :name {:constant "nicola"}}}
                  :Role {:properties {:type {:constant "Role"}
                                      :name {:constant "admin"}}}}})
 
-
 (deftest test-errors
   (testing "path in error"
-    (is (= {:errors [{:desc "Could not resolve #/definitions/Ups", :path []}],
-            :warnings []}
-           (validate schema-1 {:type "Ups"})))
+    (is (= [{:message "Could not resolve #/definitions/Ups", :path []}]
+           (:errors (validate schema-1 {:type "Ups"}))))
 
-    (is (= nil
-           (validate schema-1 {:type "User" :name "nicola"})))
+    (is (empty? (:errors (validate schema-1 {:type "User" :name "nicola"}))))
 
-    (is (= {:errors
-            [{:expected "ivan equals nicola",
-              :actual "not equal",
-              :details "ivan",
-              :path [:name]}],
-            :warnings []}
-           (validate schema-1 {:type "User" :name "ivan"})))
+    (is (= [{:path [:name], :message "expeceted nicola, but ivan"}]
+           (:errors (validate schema-1 {:type "User" :name "ivan"}))))
 
-    (is (= {:errors
-            [{:expected "nicola equals admin",
-              :actual "not equal",
-              :details "nicola",
-              :path [:name]}],
-            :warnings []}
-           (validate schema-1 {:type "Role" :name "nicola"})))
+    (is (= [{:path [:name], :message "expeceted admin, but nicola"}]
+           (:errors (validate schema-1 {:type "Role" :name "nicola"}))))
 
-    (testing "with descrimintator: path in error"
-      (is (= {:errors [{:desc "Could not resolve #/definitions/Ups", :path []}],
-              :warnings []}
-             (validate schema-2 {:type "Ups"})))
-
-      (is (= nil
-             (validate schema-2 {:type "User" :name "nicola"})))
-
-      (is (= {:errors
-              [{:expected "ivan equals nicola",
-                :actual "not equal",
-                :details "ivan",
-                :path [:name]}],
-              :warnings []}
-             (validate schema-2 {:type "User" :name "ivan"})))
-
-      (is (= {:errors
-              [{:expected "nicola equals admin",
-                :actual "not equal",
-                :details "nicola",
-                :path [:name]}],
-              :warnings []}
-             (validate schema-2 {:type "Role" :name "nicola"}))))
 
     ))
 
@@ -88,55 +44,19 @@
 
 (deftest text-exclusive-props
 
-  (is (= {:errors
-          [{:expected
-            "Properties otherValueString,otherValueNumber are mutually exclusive",
-            :path [:nested]}
-           {:expected
-            "Properties valueNumber,valueString are mutually exclusive",
-            :path []}],
-          :warnings []}
-         (validate exclusive-schema {:valueNumber 1 :valueString "s"
-                                     :nested {:otherValueString "s" :otherValueNumber 1}})))
+  (is (= [{:path [:nested],
+           :message "Properties otherValueString, otherValueNumber are mutually exclusive"}
+          {:path [],
+           :message "Properties valueNumber, valueString are mutually exclusive"}]
+         (:errors (validate exclusive-schema {:valueNumber 1 :valueString "s"
+                                      :nested {:otherValueString "s" :otherValueNumber 1}}))))
 
-  (is (= {:errors
-          [{:expected
-            "One of properties otherValueString,otherValueNumber is required",
-            :path [:nested]}
-           {:expected
-            "One of properties valueNumber,valueString is required",
-            :path []}],
-          :warnings []}
-         (validate exclusive-schema {:name "Name" :nested {:key "val"}})))
+  (is (= [{:path [:nested]
+           :message "One of properties :otherValueString, :otherValueNumber is required"}
+          {:path []
+           :message "One of properties :valueNumber, :valueString is required"}]
+         (:errors (validate exclusive-schema {:name "Name" :nested {:key "val"}})))))
 
-  )
-
-(def one-of-required-schema
-  {:type "object"
-   :additionalProperties false
-   :properties {:a {:type "string"}
-                :_a {:type "string"}
-                :b {:type "string"}
-                :c {:type "string"}
-                :_c {:type "string"}
-                }
-   :oneOfRequired [[:a :_a] :b [:c :_c]]})
-
-(deftest text-one-of-required
-
-  (is (nil? (validate one-of-required-schema {:a "a" :b "b" :c "c"})))
-  (is (nil? (validate one-of-required-schema {:_a "a" :b "b" :c "c"})))
-  (is (nil? (validate one-of-required-schema {:_a "a" :b "b" :_c "c"})))
-  (is (nil? (validate one-of-required-schema {:a "a" :b "b" :_c "c"})))
-
-  (is (= {:errors
-          [{:expected "one of properties a or _a is required",
-            :actual {:b "b", :c "c"},
-            :path []}],
-          :warnings []}
-         (validate one-of-required-schema {:b "b" :c "c"})))
-
-  )
 
 (def keyword-support
   {:type "object"
@@ -145,9 +65,15 @@
 
 (deftest test-keyword-support
 
-  (is (nil? (validate keyword-support {:a "string"})))
-  (is (nil? (validate keyword-support {:a :string})))
-  (is (nil? (validate keyword-support {:b :a})))
-  (is (nil? (validate keyword-support {:b "b"})))
+  (is (empty? (:errors (validate keyword-support {:a "string"}))))
+  (is (empty? (:errors (validate keyword-support {:a :string}))))
+  (is (empty? (:errors (validate keyword-support {:b :a}))))
+  (is (empty? (:errors (validate keyword-support {:b "b"})))))
 
-  )
+(def deferred-support
+  {:type "object"
+   :properties {:a {:type "string" :deferred {:message "Just do something"}}}})
+
+(deftest test-deferred-support
+  (is (= [{:path [:a] :value "ups" :deferred {:message "Just do something"}}]
+         (:deferreds (validate deferred-support {:a "ups"})))))
