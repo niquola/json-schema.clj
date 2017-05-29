@@ -77,3 +77,41 @@
 (deftest test-deferred-support
   (is (= [{:path [:a] :value "ups" :deferred {:message "Just do something"}}]
          (:deferreds (validate deferred-support {:a "ups"})))))
+
+(deftest test-warnings
+
+  (is (= [{:path [:extra], :message "extra property"}]
+         (:warnings
+          (validate {:type :object
+                     :properties {:name {:type "string"}
+                                  :email {:type "string"}}
+                     :additionalProperties false
+                     :required [:email]}
+                    {:name "name" :email "email@ups.com" :extra "prop"}
+                    {:config {:warnings {:additionalProperties true}}}))))
+
+  (is (empty?
+       (:errors (validate {:type :object
+                           :properties {:name {:type "string"}
+                                        :email {:type "string"}}
+                           :additionalProperties false
+                           :required [:email]}
+                          {:name "name" :email "email@ups.com" :extra "prop"}
+                          {:config {:warnings {:additionalProperties true}}}))))
+
+  (is (= [{:path [:extra], :message "extra property"}]
+         (:errors
+          (validate {:type :object
+                     :properties {:name {:type "string"}
+                                  :email {:type "string"}}
+                     :additionalProperties false
+                     :required [:email]}
+                    {:name "name" :email "email@ups.com" :extra "prop"}))))
+
+  (is (empty?
+       (:warnings (validate {:type :object
+                           :properties {:name {:type "string"}
+                                        :email {:type "string"}}
+                           :additionalProperties false
+                           :required [:email]}
+                          {:name "name" :email "email@ups.com" :extra "prop"})))))
