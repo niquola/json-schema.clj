@@ -15,9 +15,9 @@
   (cond (> a b) 1 (= a b) 0 :else -1))
 
 (defn add-error [val-type ctx message]
-  (if (get-in ctx [:config :warnings val-type])
-    (update-in ctx [:warnings] conj {:path (:path ctx) :message message})
-    (update-in ctx [:errors] conj {:path (:path ctx) :message message})))
+  (let [k (or (get-in ctx [:config val-type]) :errors)]
+    (update-in ctx [k] (fn [x] (if x (conj x {:path (:path ctx) :message message})
+                                   [{:path (:path ctx) :message message}])))))
 
 (defn add-deferred [ctx value annotation]
   (update-in ctx [:deferreds] conj {:path (:path ctx) :value value :deferred annotation}))
@@ -1161,7 +1161,8 @@
 (defn compile [schema & [ctx]]
   (let [vf (compile-schema schema [] (atom {}))
         ctx (merge {:path [] :errors [] :deferreds [] :warnings []} (or ctx {}))]
-    (fn [v & [lctx]] (select-keys (vf (merge (assoc ctx :doc v) (or lctx {})) v) [:errors :warnings :deferreds]))))
+    (fn [v & [lctx]] (dissoc (vf (merge (assoc ctx :doc v) (or lctx {})) v)
+                             :doc :path :config))))
 
 (defn compile-registry [schema & [ctx]]
   (let [registry (atom {}) 
@@ -1187,7 +1188,7 @@
                           :extra "filed"}
              :required [:email]}
             {:name 5}
-            {:config {:warnings {:additionalProperties true}}})
+            {:config {:additionalProperties :warnings}})
 
   (validate {:minimum 5} 3)
 
@@ -1266,7 +1267,7 @@
                :required [:email]}))
 
   (vvv {:name "name" :email "email@ups.com" :extra "prop"}
-       {:config {:warnings {:additionalProperties true}}})
+       {:config {:additionalProperties :warnings}})
 
   (vvv {:name "name" :email "email@ups.com" :extra "prop"})
 
@@ -1276,6 +1277,6 @@
              :additionalProperties false
              :required [:email]}
             {:name "name" :email "email@ups.com" :extra "prop"}
-            {:config {:warnings {:additionalProperties true}}})
+            {:config {:additionalProperties :warnings}})
 
   )

@@ -88,7 +88,7 @@
                      :additionalProperties false
                      :required [:email]}
                     {:name "name" :email "email@ups.com" :extra "prop"}
-                    {:config {:warnings {:additionalProperties true}}}))))
+                    {:config {:additionalProperties :warnings}}))))
 
   (is (empty?
        (:errors (validate {:type :object
@@ -97,7 +97,8 @@
                            :additionalProperties false
                            :required [:email]}
                           {:name "name" :email "email@ups.com" :extra "prop"}
-                          {:config {:warnings {:additionalProperties true}}}))))
+                          {:config {:additionalProperties :warnings}})
+                )))
 
   (is (= [{:path [:extra], :message "extra property"}]
          (:errors
