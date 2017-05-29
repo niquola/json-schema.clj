@@ -1161,7 +1161,7 @@
 (defn compile [schema & [ctx]]
   (let [vf (compile-schema schema [] (atom {}))
         ctx (merge {:path [] :errors [] :deferreds [] :warnings []} (or ctx {}))]
-    (fn [v & _] (select-keys (vf (assoc ctx :doc v) v) [:errors :warnings :deferreds]))))
+    (fn [v & [lctx]] (select-keys (vf (merge (assoc ctx :doc v) (or lctx {})) v) [:errors :warnings :deferreds]))))
 
 (defn compile-registry [schema & [ctx]]
   (let [registry (atom {}) 
@@ -1258,13 +1258,17 @@
                       {:then false}]} 1001)
 
 
-  (validate {:type :object
-             :properties {:name {:type "string"}
-                          :email {:type "string"}}
-             :additionalProperties false
-             :required [:email]}
-            {:name "name" :email "email@ups.com" :extra "prop"}
-            {:config {:warnings {:additionalProperties true}}})
+  (def vvv
+    (compile {:type :object
+               :properties {:name {:type "string"}
+                            :email {:type "string"}}
+               :additionalProperties false
+               :required [:email]}))
+
+  (vvv {:name "name" :email "email@ups.com" :extra "prop"}
+       {:config {:warnings {:additionalProperties true}}})
+
+  (vvv {:name "name" :email "email@ups.com" :extra "prop"})
 
   (validate {:type :object
              :properties {:name {:type "string"}
