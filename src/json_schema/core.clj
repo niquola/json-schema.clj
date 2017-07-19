@@ -297,6 +297,25 @@
       ctx
       (add-error :null ctx "expected null"))))
 
+(defmethod schema-type
+  :any
+  [_]
+  (fn [ctx v] ctx))
+
+(defmethod schema-type
+  nil 
+  [_]
+  (fn [ctx v]
+    (if (nil? v)
+      ctx
+      (add-error :null ctx "expected null"))))
+
+(defmethod schema-type
+  :default
+  [unknown]
+  (fn [ctx v]
+    (add-error :unknown-type ctx (str "Broken schema: unknown type " unknown))))
+
 
 (defmethod schema-key
   :type
@@ -320,9 +339,16 @@
     (let [props-validators
           (doall (reduce (fn [acc [k v]]
                            (assoc acc k (compile-schema v (into path [:properties (keyword k)]) registry)))
-                         {} props))]
+                         {} props))
+          requireds (reduce (fn [acc [k v]]
+                              (if (= true (:required v))
+                                (conj acc k)
+                                acc)) [] props)
+          req-validator (when (not (empty? requireds))
+                          (schema-key :required requireds schema path registry))]
       (fn [ctx v]
-        (let [pth (:path ctx)]
+        (let [pth (:path ctx)
+              ctx (if req-validator (req-validator ctx v) ctx)]
           (reduce (fn [ctx [k vf]]
                     (if-let [vv (get v k)]
                       (vf (assoc ctx :path (conj pth k)) vv)
@@ -631,22 +657,19 @@
   [_ options schema path registry]
   (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :oneOf) registry)) options))]
     (fn [ctx v]
-      (loop [cnt 0 validators validators]
-        (cond
-          (empty? validators)
+      (loop [cnt 0
+             res nil
+             validators validators]
+        (if (empty? validators)
           (if (= 1 cnt)
-            ctx
+            (update ctx :deferreds (fn [x] (into x (or (:deferreds res) []))))
             (add-error :oneOf ctx (str "expeceted one of " options ", but no one is valid")))
-
-          (let [res ((first validators) (assoc ctx :errors []) v)] (empty? (:errors res)))
-          (if (> cnt 0)
-            (add-error :oneOf ctx (str "expeceted one of " options ", but more then one are valid"))
-            (recur (inc cnt) (rest validators)))
-
-          :else
-          (recur cnt (rest validators))
-
-          )))))
+          (let [new-res ((first validators) (assoc ctx :errors [] :deferreds []) v)]
+            (if (empty? (:errors new-res))
+              (if (> cnt 0)
+                (add-error :oneOf ctx (str "expeceted one of " options ", but more then one are valid"))
+                (recur (inc cnt) new-res (rest validators)))
+              (recur cnt res (rest validators)))))))))
 
 (defmethod schema-key
   :additionalProperties
@@ -694,6 +717,9 @@
       :else (assert false (str "Ups do not know how to validate additionalProperties " ap)))))
 
 
+(defn has-property? [v k]
+  (and (contains? v (keyword k)) (not (nil? (get v (keyword k))))))
+
 (defmethod schema-key
   :required
   [_ props schema path registry]
@@ -703,7 +729,7 @@
       (if (map? v)
         (let [pth (:path ctx)]
           (reduce (fn [ctx k]
-                    (if (contains? v (keyword k))
+                    (if (has-property? v k)
                       ctx
                       (add-error  :requred ctx (str "Property " (name k) " is required"))))
                   ctx props))
@@ -721,7 +747,7 @@
           (map? v)
           (let [pth (:path ctx)]
             (reduce (fn [ctx k]
-                      (if (contains? v (keyword k))
+                      (if (has-property? v k)
                         ctx
                         (add-error :required ctx (str "Property " (name k) " is required"))))
                     ctx $props))
@@ -1022,15 +1048,22 @@
     :direction -1
     :bound bound}))
 
+
 (def format-regexps
-  {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))$"
+  {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))?$"
    "date"      #"^(\d{4})-(\d{2})-(\d{2})$"
    "time"      #"^(\d{2}):(\d{2}):(\d{2})(\.\d+)?([zZ]|(\+|\-)(\d{2}):(\d{2}))?$"
    "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
    "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
+   "host-name"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
    "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
    "ipv6"      #"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"
-   "uri"       #"^((https?|ftp|file):)?//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"
+   "color"      #".*"
+   "ip-address" #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
+   "uri"       #"^((https?|ftp|file):)//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"
+   "uri-reference"    #".*"
+   "uri-template"    #".*"
+   "json-pointer"    #".*"
    "regex"    #"^.*$"
    "unknownformat"   #"^.*$"
    "unknown"   #"^.*$"})
