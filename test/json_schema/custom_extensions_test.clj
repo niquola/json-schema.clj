@@ -203,3 +203,65 @@
         :warnings []}))
 
   )
+
+(deftest test-subset
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b [3 1 2]})
+       {:errors [], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b [2 1]})
+       {:errors [], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b [1]})
+       {:errors [], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b []})
+       {:errors [], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b [1 2 3 4]})
+       {:errors [{:path [:b], :message "[1 2 3 4] is not a subset of [1 2 3]"}], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:a {:type "array"}
+                      :b {:subset {:$data "#/a"}}}}
+        {:a [1 2 3]
+         :b [5]})
+       {:errors [{:path [:b], :message "[5] is not a subset of [1 2 3]"}], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:b {:subset [2 3]}}}
+        {:b [1 2 3]})
+       {:errors [{:path [:b], :message "[1 2 3] is not a subset of [2 3]"}], :deferreds [], :warnings []}))
+  (is (=
+       (validate
+        {:type "object"
+         :properties {:b {:subset [2 3 1]}}}
+        {:b [1 2 3]})
+       {:errors [], :deferreds [], :warnings []})))

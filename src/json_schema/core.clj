@@ -1129,6 +1129,16 @@
         ctx))))
 
 (defmethod schema-key
+  :subset
+  [_ arr _ _ _]
+  (fn [ctx v]
+    (assert (or (fn? arr) (vector? arr)))
+    (let [arr (if (fn? arr) (arr ctx) arr)]
+      (if (clojure.set/subset? (set v) (set arr))
+        ctx
+        (add-error :subset ctx (str v " is not a subset of " arr))))))
+
+(defmethod schema-key
   :deferred
   [_ annotation schema path registry]
   (fn [ctx v]
