@@ -285,7 +285,7 @@
   :array
   [_]
   (fn [ctx v]
-    (if (vector? v)
+    (if (sequential? v)
       ctx
       (add-error :array ctx "expected array"))))
 
@@ -320,7 +320,7 @@
 (defmethod schema-key
   :type
   [k opts schema path regisry] 
-  (if (vector? opts)
+  (if (sequential? opts)
     (let [validators (doall (mapv (fn [o] (schema-type (keyword o))) opts))]
       (fn [ctx v]
         (if (some
@@ -425,7 +425,7 @@
   (if (fn? enum)
     (fn [ctx v]
       (let [$enum (enum ctx)]
-        (if-not (vector? $enum)
+        (if-not (sequential? $enum)
           (if (nil? $enum)
             ctx
             (add-error :enum ctx (str "could not enum by " $enum)))
@@ -492,7 +492,7 @@
          (doall (reduce (fn [acc [k v]]
                     (assoc acc k
                            (cond
-                             (and (vector? v) (every? string? v)) (let [req-keys (map keyword v)]
+                             (and (sequential? v) (every? string? v)) (let [req-keys (map keyword v)]
                                                                     (fn [ctx vv]
                                                                       (if-not (every? #(contains? vv %) req-keys)
                                                                         (add-error :dependencies ctx (str req-keys " are required"))
@@ -724,7 +724,7 @@
   :required
   [_ props schema path registry]
   (cond
-    (vector? props)
+    (sequential? props)
     (fn [ctx v]
       (if (map? v)
         (let [pth (:path ctx)]
@@ -741,7 +741,7 @@
         (cond
           (nil? $props) ctx
 
-          (not (vector? $props))
+          (not (sequential? $props))
           (add-error :required ctx (str "expected array of strings, but " $props))
 
           (map? v)
@@ -757,7 +757,7 @@
   :patternRequired
   [_ props schema path registry]
   (cond
-    (vector? props)
+    (sequential? props)
     (let [re-props (set (map (fn [x] (re-pattern (name x))) props))]
       (fn [ctx v]
         (if-not (map? v)
@@ -978,7 +978,7 @@
   (cond
     (= true uniq)
     (fn [ctx v]
-      (if (and (vector? v) (not (= (count v) (count (set v)))))
+      (if (and (sequential? v) (not (= (count v) (count (set v)))))
         (add-error :uniqueItems ctx "expected unique items")
         ctx))
 
@@ -993,7 +993,7 @@
 
           (= false $uniq) ctx
 
-          (and (vector? v) (not (= (count v) (count (set v)))))
+          (and (sequential? v) (not (= (count v) (count (set v)))))
           (add-error :uniqueItems ctx "expected unique items")
 
           :else ctx)))))
@@ -1025,7 +1025,7 @@
   [_ bound schema path registry]
   (compile-comparator
    {:name :maxItems
-    :applicable-value vector?
+    :applicable-value sequential?
     :coerce-value count
     :applicable-bound number?
     :comparator-fn num-comparator 
@@ -1039,7 +1039,7 @@
   [_ bound schema path registry]
   (compile-comparator
    {:name :minItems
-    :applicable-value vector?
+    :applicable-value sequential?
     :coerce-value count
     :applicable-bound number?
     :comparator-fn num-comparator 
@@ -1120,7 +1120,7 @@
   [_ subsch schema path registry]
   (let [validator (compile-schema subsch path registry)]
     (fn [ctx v]
-      (if (and (vector? v)
+      (if (and (sequential? v)
                (not (some (fn [vv]
                             (let [{err :errors} (validator (assoc ctx :errors []) vv)]
                               (empty? err))
@@ -1132,7 +1132,7 @@
   :subset
   [_ arr _ _ _]
   (fn [ctx v]
-    (assert (or (fn? arr) (vector? arr)))
+    (assert (or (fn? arr) (sequential? arr)))
     (let [arr (if (fn? arr) (arr ctx) arr)]
       (if (clojure.set/subset? (set v) (set arr))
         ctx
@@ -1151,7 +1151,7 @@
     (or (map? items) (boolean? items))
     (let [validator (compile-schema items (conj path :items) registry)]
       (fn [ctx vs]
-        (if-not (vector? vs)
+        (if-not (sequential? vs)
           ctx
           (if-not validator
             ctx
@@ -1161,14 +1161,14 @@
                  (validator (assoc ctx :path (conj pth idx)) v))
                ctx vs))))))
 
-    (vector? items)
+    (sequential? items)
     (let [validators (doall (map-indexed (fn [idx x]
                                            (if (or (map? x) (boolean? x))
                                              (compile-schema x (into path [:items idx]) registry)
                                              (assert false (pr-str "Items:" items)))) items))
           ai-validator (when-not (or (nil? ai) (boolean? ai)) (compile-schema ai path registry))]
       (fn [ctx vs]
-        (if-not (vector? vs)
+        (if-not (sequential? vs)
           (add-error :items ctx "expected array")
           (let [pth (:path ctx)]
             (loop [idx 0
