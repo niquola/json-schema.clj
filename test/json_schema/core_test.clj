@@ -1,4 +1,5 @@
 (ns json-schema.core-test
+  (:refer-clojure :exclude [compile])
   (:require [cheshire.core :as json]
             [clojure.java.io :as io]
             [clojure.test :refer :all]

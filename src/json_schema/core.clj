@@ -1,4 +1,5 @@
 (ns json-schema.core
+  (:refer-clojure :exclude [compile])
   (:require [cheshire.core :as json]
             [clojure.set]
             [clojure.string :as str]))
