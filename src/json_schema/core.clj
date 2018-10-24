@@ -487,30 +487,34 @@
       ctx)))
 
 (defmethod schema-key
-   :dependencies
-   [_ props schema path registry]
-   (assert (map? props))
-   (let [props-validators
-         (doall (reduce (fn [acc [k v]]
-                    (assoc acc k
-                           (cond
-                             (and (sequential? v) (every? string? v)) (let [req-keys (map keyword v)]
-                                                                    (fn [ctx vv]
-                                                                      (if-not (every? #(contains? vv %) req-keys)
-                                                                        (add-error :dependencies ctx (str req-keys " are required"))
-                                                                        ctx)))
-                             (map? v) (compile-schema v (conj path :dependencies) registry)
-                             :else (fn [ctx v] ctx))))
-                  {} props))]
-     (fn [ctx v]
-       (if-not (map? v)
-         ctx
-         (let [pth (:path ctx)]
-           (reduce (fn [ctx [k vf]]
-                     (if (contains? v k) 
-                       (vf (assoc ctx :path (conj pth k)) v)
-                       ctx))
-                   ctx props-validators))))))
+  :dependencies
+  [_ props schema path registry]
+  (assert (map? props))
+  (let [props-validators
+        (doall (reduce (fn [acc [k v]]
+                         (assoc acc k
+                                (cond
+                                  (and (sequential? v) (every? string? v))
+                                  (let [req-keys (map keyword v)]
+                                    (fn [ctx vv]
+                                      (if-not (every? #(contains? vv %) req-keys)
+                                        (add-error :dependencies ctx (str req-keys " are required"))
+                                        ctx)))
+
+                                  (or (map? v) (boolean? v))
+                                  (compile-schema v (conj path :dependencies k) registry)
+                                  
+                                  :else (fn [ctx v] ctx))))
+                       {} props))]
+    (fn [ctx v]
+      (if-not (map? v)
+        ctx
+        (let [pth (:path ctx)]
+          (reduce (fn [ctx [k vf]]
+                    (if (contains? v k) 
+                      (vf (assoc ctx :path (conj pth k)) v)
+                      ctx))
+                  ctx props-validators))))))
 
 (defmethod schema-key
   :patternProperties
