@@ -333,6 +333,7 @@
     (schema-type (keyword opts))))
 
 
+
 (defmethod schema-key
   :properties
   [_ props schema path registry]
@@ -516,7 +517,7 @@
   [_ props schema path registry]
   (let [props-map
         (doall (reduce (fn [acc [k v]]
-                         (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties) registry)))
+                         (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties (name k)) registry)))
                        {} props))]
     (fn [ctx v]
       (if-not (map? v)
@@ -568,6 +569,20 @@
 
                :else ctx)))
          ctx props-map)))))
+
+(defmethod schema-key
+  :extends
+  [_ props schema path registry]
+  (let [validators (doall
+                    (->>
+                     (cond (sequential? props) props
+                           (map? props) [props]
+                           :else (assert false (str "Not impl extends " props)))
+                     (mapv (fn [o] (compile-schema o (conj path :extends) registry)))))]
+    (fn [ctx v]
+      (let [pth (:path ctx)]
+        (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
+                ctx validators)))))
 
 (defmethod schema-key
   :allOf
@@ -719,7 +734,8 @@
 
 
 (defn has-property? [v k]
-  (and (contains? v (keyword k)) (not (nil? (get v (keyword k))))))
+  (and (contains? v (keyword k))
+       #_(not (nil? (get v (keyword k))))))
 
 (defmethod schema-key
   :required
@@ -1059,13 +1075,18 @@
    "host-name"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
    "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
    "ipv6"      #"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"
-   "color"      #".*"
+   "color"     #"^(#(?:[0-9a-fA-F]{2}){2,3}|#[0-9a-fA-F]{3}|(?:rgba?|hsla?)\((?:\d+%?(?:deg|rad|grad|turn)?(?:,|\s)+){2,3}[\s\/]*[\d\.]+%?\)|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|aliceblue|antiquewhite|aquamarine|azure|beige|bisque|blanchedalmond|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|gainsboro|ghostwhite|gold|goldenrod|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|limegreen|linen|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|oldlace|olivedrab|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|thistle|tomato|turquoise|violet|wheat|whitesmoke|yellowgreen|rebeccapurple)$"
    "ip-address" #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
    "uri"       #"^((https?|ftp|file):)//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"
    "uri-reference"    #".*"
    "uri-template"    #".*"
    "json-pointer"    #".*"
    "regex"    #"^.*$"
+   "idn-hostname" #"^.*$"
+   "iri-reference" #"^.*$"
+   "iri" #"^.*$"
+   "idn-email" #"^.*@.*$"
+   "relative-json-pointer" #"^.*$"
    "unknownformat"   #"^.*$"
    "unknown"   #"^.*$"})
 
@@ -1239,7 +1260,9 @@
   (validate {:oneOf [{:type "integer"} {:minimum 2}]} 1.5)
   (keys
    @(compile-registry
-     {:items [{:type "integer"} {:$ref "#/items/0"}]}))
+     {:patternProperties {:.* {:type "object"
+                               :properties {:name {:type "string"}}}}})
+   )
 
   (validate {:constant 5} 5)
   (validate {:constant 5} 4)

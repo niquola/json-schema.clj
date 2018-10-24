@@ -265,3 +265,59 @@
          :properties {:b {:subset [2 3 1]}}}
         {:b [1 2 3]})
        {:errors [], :deferreds [], :warnings []})))
+
+(deftest ref-props-test
+  (is (=
+       (validate
+        {:type "object"
+         :additionalProperties false
+         :properties {:name {:type "string"}
+                      :item {:$ref "#"}}}
+        {:name "ok-1"
+         :item {:name "ok-2"
+                :item {:name "ok-3"}}}
+        )
+       {:errors [], :deferreds [], :warnings []}))
+
+  (is (=
+       (validate
+        {:type "object"
+         :additionalProperties false
+         :properties {:name {:type "string"}
+                      :item {:$ref "#"}}}
+        {:name "ok-1"
+         :item {:name "ok-2"
+                :item {:name "ok-3"
+                       :extra "ups"}}})
+       {:errors [{:path [:item :item :extra], :message "extra property"}]
+        :deferreds [] :warnings []}))
+
+  (is (=
+       (validate
+        {:type "object"
+         :patternProperties {:.* {:additionalProperties false
+                                  :properties {:name {:type "string"}
+                                               :attrs {:type "object"
+                                                       :patternProperties {:.* {:$ref "#/patternProperties/.*"}}} }}}}
+        {:a {:name "ok-1"
+             :attrs {:b {:name "ok-2"
+                        :attrs {:c {:name "ok-3"}}}}}})
+
+       {:errors [] :deferreds [] :warnings []}))
+
+  (is (=
+       (validate
+        {:type "object"
+         :patternProperties {:.* {:additionalProperties false
+                                  :properties {:name {:type "string"}
+                                               :attrs {:type "object"
+                                                       :patternProperties {:.* {:$ref "#/patternProperties/.*"}}} }}}}
+        {:a {:name "ok-1"
+             :attrs {:b {:name "ok-2"
+                         :attrs {:c {:name "ok-3"
+                                     :extra "ups"}}}}}})
+
+       {:errors [{:path [:a :attrs :b :attrs :c :extra], :message "extra property"}]
+        :deferreds [] :warnings []}))
+
+  )
