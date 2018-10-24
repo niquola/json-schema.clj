@@ -494,6 +494,12 @@
         (doall (reduce (fn [acc [k v]]
                          (assoc acc k
                                 (cond
+                                  (string? v)
+                                  (fn [ctx vv]
+                                    (if-not (contains? vv (keyword v))
+                                      (add-error :dependencies ctx (str v " is required"))
+                                      ctx))
+
                                   (and (sequential? v) (every? string? v))
                                   (let [req-keys (map keyword v)]
                                     (fn [ctx vv]
