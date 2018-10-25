@@ -343,9 +343,11 @@
 
 (defmethod schema-key
   :type
-  [k opts schema path regisry] 
+  [k opts schema path registry] 
   (if (sequential? opts)
-    (let [validators (doall (mapv (fn [o] (schema-type (keyword o))) opts))]
+    (let [validators (->> opts
+                          (mapv (fn [o] (if (string? o) (schema-type (keyword o)) (compile-schema o (conj path :type) registry))))
+                          doall)]
       (fn [ctx v]
         (if (some
              (fn [validator]
@@ -354,8 +356,6 @@
           ctx
           (add-error :type ctx (str "expected type of one of " (str/join ", " opts))))))
     (schema-type (keyword opts))))
-
-
 
 (defmethod schema-key
   :properties
@@ -432,6 +432,31 @@
 
           (and (number? v) (not (or (= 0 v) (is-divider? v $bound))))
           (add-error :multipleOf ctx (str "expected " v " is multiple of " $bound))
+
+          :else ctx)))
+    :else nil))
+
+
+(defmethod schema-key
+  :divisibleBy
+  [_ bound schema path registry]
+  (cond
+    (number? bound)
+    (fn [ctx v]
+      (if (and (number? v) (not (or (= 0 v) (is-divider? v bound))))
+        (add-error :divisibleBy ctx (str "expected " v " is divisible by  " bound))
+        ctx))
+    (fn? bound)
+    (fn [ctx v]
+      (let [$bound (bound ctx)]
+        (cond
+          (nil? $bound) ctx
+
+          (and (some? $bound) (not (number? $bound)))
+          (add-error :multipleOf ctx (str "could not find divisible by " v " and " $bound))
+
+          (and (number? v) (not (or (= 0 v) (is-divider? v $bound))))
+          (add-error :multipleOf ctx (str "expected " v " is divisible by " $bound))
 
           :else ctx)))
     :else nil))
@@ -722,6 +747,18 @@
         (if (empty? errs)
           (add-error :not ctx (str "Expected not " subschema))
           ctx)))))
+
+(defmethod schema-key
+  :disallow
+  [_ subschema schema path registry]
+  (let [validators (let [subsch (if (sequential? subschema) subschema [subschema])]
+                     (doall (mapv (fn [sch]
+                              (compile-schema (if (string? sch) {:type sch} sch) (conj path :disallow) registry))
+                            subsch)))]
+    (fn [ctx v]
+      (if (some (fn [vl] (-> (vl ctx v) :errors empty?)) validators)
+        (add-error :disallow ctx (str "Disallowed by " (json/generate-string subschema)))
+        ctx))))
 
 (defmethod schema-key
   :anyOf

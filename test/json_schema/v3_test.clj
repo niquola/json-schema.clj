@@ -18,8 +18,8 @@
   (let [validator (compile {:properties {:bar {:type "integer", :required true}},
                             :extends
                             [{:properties {:foo {:type "string", :required true}}}
-                             {:properties {:baz {:type "null", :required true}}}]})
-        res (validator {:foo "quux", :bar 2, :baz nil})]
+                             {:properties {:baz {:type "string", :required true}}}]})
+        res (validator {:foo "quux", :bar 2, :baz "foo"})]
     (is (= true (empty? (:errors res))))
     res)
 
@@ -48,9 +48,26 @@
     (is (= false (empty? (:errors res))))
     res)
 
+  "by small number"
+  (let [validator (compile {:divisibleBy 2})
+        res (validator 4)]
+    (is (= true (empty? (:errors res))))
+    res)
+
+  (let [validator (compile {:divisibleBy 3})
+        res (validator 4)]
+    (is (= false (empty? (:errors res))))
+    res)
+
+  "types can include schemas"
+  (let [validator (compile {:type ["array" {:type "object"}]})
+        res (validator {})]
+    (is (= true (empty? (:errors res))))
+    res)
+
   )
 
 (deftest draft3-test
-  (u/test-files (u/files "draft3" re-filter))
+  (u/test-files (u/files "draft3" re-filter) #{"multiple extends" "ECMA 262 regex dialect recognition"})
   )
 

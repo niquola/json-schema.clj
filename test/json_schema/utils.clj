@@ -47,22 +47,24 @@
 
 (defn pp [x] (with-out-str (pprint/pprint x)))
 
-(defn test-files [files]
-  (doseq [test-file files]
-    (let [test-case (read-json test-file)]
-      (doseq [{:keys [schema tests description] :as scenario} test-case]
-        (testing description
-          ;; (println "Test:" description)
-          ;; (println "Schema: " schema)
-          (let [validator (compile schema)]
-            (doseq [{:keys [data valid] :as test-item} tests]
-              (let [result (validator  data)]
-                ;; (println test-item)
-                (is (= valid (empty? (:errors result)))
-                    (str
-                     "(let [validator (compile " (pp schema) ")
+(defn test-files [files & [skip-list]]
+  (let [skip-list (or  skip-list #{})]
+    (doseq [test-file files]
+      (let [test-case (read-json test-file)]
+        (doseq [{:keys [schema tests description] :as scenario} test-case]
+          (when-not (contains? skip-list description)
+            (testing (pr-str description)
+              ;; (println "Test:" description)
+              ;; (println "Schema: " schema)
+              (let [validator (compile schema)]
+                (doseq [{:keys [data valid] :as test-item} tests]
+                  (let [result (validator  data)]
+                    ;; (println test-item)
+                    (is (= valid (empty? (:errors result)))
+                        (str
+                         "(let [validator (compile " (pp schema) ")
   res (validator " (pp data) " )
 ]
   (is (= "valid" (empty? (:errors res))))
 res
-)"))))))))))
+)"))))))))))))
