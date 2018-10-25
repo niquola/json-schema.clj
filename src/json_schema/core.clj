@@ -1,6 +1,7 @@
 (ns json-schema.core
   (:refer-clojure :exclude [compile])
-  (:import [java.net.URL])
+  (:import [java.net.URL]
+           [java.time.LocalDate])
   (:require [cheshire.core :as json]
             [clojure.set]
             [clojure.string :as str]))
@@ -1209,7 +1210,7 @@
 
 
 (def format-regexps
-  {"date-time" #"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))?$"
+  {
    "date"      #"^(\d{4})-(\d{2})-(\d{2})$"
    "time"      #"^(\d{2}):(\d{2}):(\d{2})(\.\d+)?([zZ]|(\+|\-)(\d{2}):(\d{2}))?$"
    "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
@@ -1260,9 +1261,18 @@
       (.getMessage e))))
 
 
+(defn valid-date-time? [x]
+  (try 
+    (java.time.LocalDate/parse x java.time.format.DateTimeFormatter/ISO_DATE_TIME)
+    nil
+    (catch Exception e
+      (.getMessage e))))
+
+
 (def format-fns
   {"regex" valid-regex?
    "uri"    valid-uri?
+   "date-time" valid-date-time? ;;#"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))?$"
    "json-pointer"   valid-pointer?})
 
 (defmethod schema-key

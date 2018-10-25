@@ -6,7 +6,6 @@
 
 (def re-filter #"^.*$")
 
-
 (deftest test-some-7
 
   ;; dependencies with boolean subschemas
