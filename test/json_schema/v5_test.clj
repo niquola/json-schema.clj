@@ -1,4 +1,5 @@
 (ns json-schema.v5-test
+  (:refer-clojure :exclude [compile])
   (:require
    [json-schema.utils :as u]
    [clojure.test :refer :all]))

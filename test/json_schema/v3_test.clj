@@ -1,4 +1,5 @@
 (ns json-schema.v3-test
+  (:refer-clojure :exclude [compile])
   (:require
    [json-schema.utils :as u]
    [json-schema.core :refer :all]
@@ -37,6 +38,13 @@
   ;;dependencies
   (let [validator (compile {:dependencies {:bar "foo"}})
         res (validator {:bar 2})]
+    (is (= false (empty? (:errors res))))
+    res)
+
+
+  ;; ECMA 262 regex dialect recognition
+  (let [validator (compile {:format "regex"})
+        res (validator "(?<=foobar")]
     (is (= false (empty? (:errors res))))
     res)
 

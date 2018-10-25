@@ -19,6 +19,8 @@
     (is (= [{:message "Could not resolve #/definitions/Ups", :path []}]
            (:errors (validate schema-1 {:type "Ups"}))))
 
+    (validate schema-1 {:type "User" :name "nicola"})
+
     (is (empty? (:errors (validate schema-1 {:type "User" :name "nicola"}))))
 
     (is (= [{:path [:name], :message "expeceted nicola, but ivan"}]
@@ -148,7 +150,8 @@
   (is (not (empty? (:errors (validate {:type :object
                                        :properties {:name {:type "string"}}
                                        :required [:name]}
-                                      {:name nil})))))
+                                      {:name nil})
+                            ))))
 
   (is
    (empty? (:errors (validate {:type :object

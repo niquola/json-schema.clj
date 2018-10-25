@@ -1,5 +1,6 @@
 (ns json-schema.core
   (:refer-clojure :exclude [compile])
+  (:import [java.net.URL])
   (:require [cheshire.core :as json]
             [clojure.set]
             [clojure.string :as str]))
@@ -11,6 +12,28 @@
   (-> x (str/replace #"~0" "~")
       (str/replace #"~1" "/")
       (str/replace #"%25" "%")))
+
+(defn json-pointer-to-path [x]
+  (->> (str/split (str/replace x #"^#?/?" "") #"/")
+       (filter #(not (str/blank? %)))
+       (mapv decode-json-pointer)
+       (mapv keyword)))
+
+(defn resolve-pointer [obj pth]
+  (loop [[p & ps] pth cur obj]
+    (cond
+      (nil? cur) nil
+      (nil? p ) cur
+      (map? cur) (let [next (or (get cur p) (get cur (keyword p)))]
+                   (recur ps next))
+
+      (and (sequential? cur) (re-matches #"^\d+" (name p)))
+      (let [idx (Integer/parseInt (name p))]
+        (nth cur idx))
+
+      :else (assert false (str "not handled yet" p " " cur)))))
+
+
 
 (defn num-comparator [a b]
   (cond (> a b) 1 (= a b) 0 :else -1))
@@ -95,6 +118,7 @@
         (and (value-applicable? v)
                (bound-applicable? $bound)
                (not (op 0 (* direction (comparator-fn $bound (coerce-value v))))))
+
         (add-error name ctx (str "expected" message " " (coerce-value v) message-op $bound))
         :else ctx))))
 
@@ -147,8 +171,7 @@
                                   ctx validators))))
                     :else
                     (fn [ctx v] (add-error :schema ctx (str "Invalid schema " schema))))]
-    (let [ref (build-ref path)]
-      (swap! registry assoc ref schema-fn))
+    (let [ref (build-ref path)] (swap! registry update ref (fn [x] (if x x schema-fn))))
     schema-fn))
 
 (defmethod schema-type
@@ -440,8 +463,7 @@
         ctx))))
 
 
-(defmethod schema-key
-  :constant
+(defn const-impl
   [_ const schema path registry]
   (if (fn? const)
     (fn [ctx v]
@@ -453,6 +475,12 @@
       (if-not (json-compare const v)
         (add-error :constant ctx (str "expeceted " const ", but " v))
         ctx))))
+
+(defmethod schema-key :constant
+  [& args] (apply const-impl args))
+
+(defmethod schema-key :const
+  [& args] (apply const-impl args))
 
 (defmethod schema-key
   :discriminator
@@ -657,6 +685,35 @@
                 :else (recur ctx cls)))))))
 
 (defmethod schema-key
+  :$id [& args] nil)
+
+(defmethod schema-key
+  :$schema [& args] nil)
+
+
+(defmethod schema-key
+  :if
+  [_ if-expr {th :then el :else :as schema} path registry]
+  (let [pred-v (compile-schema if-expr path registry)
+        th-v   (compile-schema (or th true) path registry)
+        el-v   (compile-schema (or el true) path registry)]
+    (fn [ctx v]
+      (if (empty? (:errors (pred-v ctx v)))
+        (th-v ctx v)
+        (el-v ctx v)))))
+
+(defmethod schema-key
+  :then
+  [_ if-expr schema path registry]
+  nil)
+
+(defmethod schema-key
+  :else
+  [_ if-expr schema path registry]
+  nil)
+
+
+(defmethod schema-key
   :not
   [_ subschema schema path registry]
   (let [validator (compile-schema subschema (conj path :not) registry)]
@@ -745,7 +802,7 @@
 
 (defn has-property? [v k]
   (and (contains? v (keyword k))
-       #_(not (nil? (get v (keyword k))))))
+       (not (nil? (get v (keyword k))))))
 
 (defmethod schema-key
   :required
@@ -835,6 +892,7 @@
   [_ id schema path registry]
   (println "ID:" id))
 
+
 (defmethod schema-key
   :$ref
   [_ r schema path registry]
@@ -850,10 +908,21 @@
             (fn [ctx v]
               (let [res (validator ctx v)]
                 (assoc ctx :errors (into (:errors ctx) (:errors res))))))))
-      (fn [ctx v]
-        (if-let [validator (get @registry r)]
-          (validator ctx v)
-          (add-error :$ref ctx (str "Could not resolve $ref " r)))))))
+      (do
+        (when-not (get @registry r)
+          (swap! registry assoc r :lock)
+          (swap! registry assoc r (let [ref-pth (json-pointer-to-path r)
+                                        root-sch (:original @registry)
+                                        ref-sch (resolve-pointer root-sch ref-pth)]
+                                    (if (not (nil? ref-sch))
+                                      (compile-schema ref-sch ref-pth registry)
+                                      (do 
+                                        (println "WARNING: could not resolve $ref " r " in " root-sch)
+                                        (fn [ctx v] (add-error :$ref ctx (str "Could not resolve $ref = " r))))))))
+        (fn [ctx v]
+          (if-let [val (get @registry r)]
+            (val ctx v)
+            (add-error :$ref ctx (str "Could not resolve $ref = " r))))))))
 
 (defmethod schema-key
   :maximum
@@ -873,8 +942,21 @@
 
 (defmethod schema-key
   :exclusiveMaximum
-  [_ bound schema path registry]
-  nil)
+  [_ bound {m :maximum} path registry]
+  (let [m (or ($data-pointer m) m)]
+    (when (nil? m)
+      (compile-comparator
+       {:name :maximum
+        :applicable-value number?
+        :coerce-value identity
+        :applicable-bound number?
+        :comparator-fn num-comparator 
+        :message ""
+        :message-op " < "
+        :exclusive true
+        :direction 1
+        :bound bound}))))
+
 
 
 (defmethod schema-key
@@ -893,11 +975,24 @@
       :direction -1
       :bound bound})))
 
-
 (defmethod schema-key
-  :exclusiveMinimum
-  [_ bound schema path registry]
-  nil)
+  :exclusiveMinimum 
+  [_ bound {m :minimum} path registry]
+  (let [m (or ($data-pointer m) m)]
+    (when (nil? m)
+      (compile-comparator
+       {:name :minimum
+        :applicable-value number?
+        :coerce-value identity
+        :applicable-bound number?
+        :comparator-fn num-comparator 
+        :message ""
+        :message-op " > "
+        :exclusive true
+        :direction -1
+        :bound bound}))))
+
+
 
 
 (defn string-utf8-length [x]
@@ -1087,11 +1182,8 @@
    "ipv6"      #"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"
    "color"     #"^(#(?:[0-9a-fA-F]{2}){2,3}|#[0-9a-fA-F]{3}|(?:rgba?|hsla?)\((?:\d+%?(?:deg|rad|grad|turn)?(?:,|\s)+){2,3}[\s\/]*[\d\.]+%?\)|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|aliceblue|antiquewhite|aquamarine|azure|beige|bisque|blanchedalmond|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|gainsboro|ghostwhite|gold|goldenrod|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|limegreen|linen|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|oldlace|olivedrab|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|thistle|tomato|turquoise|violet|wheat|whitesmoke|yellowgreen|rebeccapurple)$"
    "ip-address" #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
-   "uri"       #"^((https?|ftp|file):)//[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]"
    "uri-reference"    #".*"
    "uri-template"    #".*"
-   "json-pointer"    #".*"
-   "regex"    #"^.*$"
    "idn-hostname" #"^.*$"
    "iri-reference" #"^.*$"
    "iri" #"^.*$"
@@ -1099,6 +1191,42 @@
    "relative-json-pointer" #"^.*$"
    "unknownformat"   #"^.*$"
    "unknown"   #"^.*$"})
+
+(defn valid-regex? [x]
+  (try 
+    (re-pattern x)
+    nil
+    (catch Exception e
+      (.getMessage e))))
+
+(defn valid-pointer? [x]
+  (if (string? x)
+    (when-not (= "" x)
+      (if-not (re-matches #"^/.*" x)
+        "json-pointer should start with /"
+        (->> (str/split x #"/")
+             (rest)
+             (reduce
+              (fn [acc tok]
+                (if (str/includes? (str/replace tok #"~[01]" "") "~")
+                  (str (and acc (str acc "; "))
+                       " ~ should be escaped [" tok "]")) 
+                ) nil))))
+    "json pointer should be string"))
+
+
+(defn valid-uri? [x]
+  (try 
+    (java.net.URL. x)
+    nil
+    (catch Exception e
+      (.getMessage e))))
+
+
+(def format-fns
+  {"regex" valid-regex?
+   "uri"    valid-uri?
+   "json-pointer"   valid-pointer?})
 
 (defmethod schema-key
   :format
@@ -1113,12 +1241,20 @@
           (add-error :format ctx (str "no format for " $fmt)))
         ctx))
 
-    (let [regex (get format-regexps (name fmt))]
-      (assert regex (str "no format for " fmt))
+    (if-let [fmt-fn (get format-fns fmt)]
       (fn [ctx v]
-        (if (and (string? v) (not (re-find regex v)))
-          (add-error :format ctx (str "expected format " fmt))
-          ctx)))))
+        (if (and v (string? v))
+          (if-let [err (fmt-fn v)]
+            (add-error :format ctx (str "expected format " fmt ", but \n" err))
+            ctx)
+          ctx))
+      (let [regex (get format-regexps (name fmt))]
+        (fn [ctx v]
+          (if (nil? regex)
+            (add-error :format ctx (str "Unknown format " fmt))
+            (if (and (string? v) (not (re-find regex v)))
+              (add-error :format ctx (str "expected format " fmt))
+              ctx)))))))
 
 (defmethod schema-key
   :pattern
@@ -1158,6 +1294,24 @@
                               (empty? err))
                             ) v)))
         (add-error :contains ctx (str "expected contains " subsch))
+        ctx))))
+
+(defmethod schema-key
+  :propertyNames
+  [_ prop-schema schema path registry]
+  (let [validator (compile-schema prop-schema path registry)]
+    (fn [ctx v]
+      (if (map? v)
+        (reduce
+         (fn [ctx prop]
+           (let [{err :errors} (validator (assoc ctx :errors []) (name prop))]
+             (if-not (empty? err)
+               (add-error :propertyNames ctx (str "Invalid property name - " (name prop) ": "
+                                                  (->> err
+                                                       (mapv :message)
+                                                       (str/join "; "))))
+               ctx)))
+         ctx (keys v))
         ctx))))
 
 (defmethod schema-key
@@ -1234,10 +1388,13 @@
 
 
 (defn compile [schema & [ctx]]
-  (let [vf (compile-schema schema [] (atom {}))
+  (let [vf (compile-schema schema [] (atom {:original schema}))
         ctx (merge {:path [] :errors [] :deferreds [] :warnings []} (or ctx {}))]
-    (fn [v & [lctx]] (dissoc (vf (merge (assoc ctx :doc v) (or lctx {})) v)
-                             :doc :path :config))))
+    (fn [v & [lctx]]
+      (let [res (vf (merge (assoc ctx :doc v) (or lctx {})) v)]
+        (if (map? res)
+          (dissoc res :doc :path :config)
+          (assert false (str "Unexpected validator result " res)))))))
 
 (defn compile-registry [schema & [ctx]]
   (let [registry (atom {}) 
@@ -1288,6 +1445,8 @@
   (validate {:minimum 1.1, :exclusiveMinimum true} 1.1)
   (validate {:maximum 1.1, :exclusiveMaximum true} 1.1)
   (validate {:minimum 1.1, :exclusiveMinimum true} 1.0)
+
+  (validate {:exclusiveMinimum 1.1} 1.1)
 
   (validate {:maximum 1.1, :exclusiveMaximum true} 1.2)
 
