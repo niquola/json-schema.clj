@@ -126,13 +126,8 @@
 (defn $data-pointer [x]
   (when-let [d (:$data x)] (compile-pointer d)))
 
-
-
 (defn add-warning [ctx message]
   (update-in ctx [:warning] conj {:path (:path ctx) :message message}))
-
-;; (def schema-type nil)
-;; (def schema-key nil)
 
 (defmulti schema-type (fn [k] k))
 
@@ -168,7 +163,8 @@
                                               [] (dissoc schema :title)))]
                       (fn [ctx v]
                         (let [pth (:path ctx)]
-                          (reduce (fn [ctx vf] (vf (assoc ctx :path pth) v))
+                          (reduce (fn [ctx vf]
+                                    (vf (assoc ctx :path pth) v))
                                   ctx validators))))
                     :else
                     (fn [ctx v] (add-error :schema ctx (str "Invalid schema " schema))))]
@@ -930,22 +926,28 @@
   [_ id schema path registry]
   (println "ID:" id))
 
+(defn external-schema [ref registry]
+  (let [[uri frag] (uri-and-fragment ref)
+        cache (or (get @registry uri)
+                  (when-let [res (try (slurp ref) (catch Exception e))]
+                    (let [remote-registry (compile-registry (json/parse-string res keyword))]
+                      (swap! registry assoc uri remote-registry)
+                      remote-registry)))]
+    (and cache (get @cache frag))))
 
 (defmethod schema-key
   :$ref
   [_ r schema path registry]
   (let [r (decode-json-pointer r)]
     (if (str/starts-with? r "http")
-      (let [[uri fragment] (uri-and-fragment r)]
-        (when-let [cache (or (get @registry uri)
-                           (when-let [res (try (slurp r) (catch Exception e))]
-                             (let [remote-registry (compile-registry (json/parse-string res keyword))]
-                               (swap! registry assoc uri remote-registry)
-                               remote-registry)))]
-          (when-let [validator (get @cache fragment)]
-            (fn [ctx v]
-              (let [res (validator ctx v)]
-                (assoc ctx :errors (into (:errors ctx) (:errors res))))))))
+      (if-let [validator (external-schema r registry)]
+        (fn [ctx v]
+          (let [res (validator ctx v)]
+            (assoc ctx :errors (into (:errors ctx) (:errors res)))))
+        (do 
+          (println "WARN:"  "Could not resolve $ref " r)
+          (fn [ctx v]
+            (add-error :$ref ctx (str "Could not resolve $ref " r)))))
       (do
         (when-not (get @registry r)
           (swap! registry assoc r :lock)

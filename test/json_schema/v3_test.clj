@@ -65,6 +65,14 @@
     (is (= true (empty? (:errors res))))
     res)
 
+  "remote ref"
+  (u/with-server
+    (fn []
+      (let [validator (compile {:$ref "http://localhost:1234/integer.json"})
+            res (validator "a")]
+        (is (= false (empty? (:errors res))))
+        res)))
+
   )
 
 (deftest draft3-test
