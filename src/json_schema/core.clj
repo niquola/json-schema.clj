@@ -1,10 +1,10 @@
 (ns json-schema.core
   (:refer-clojure :exclude [compile])
-  (:import [java.net.URL]
-           [java.time.LocalDate])
   (:require [cheshire.core :as json]
             [clojure.set]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import java.net.URL
+           java.time.LocalDate))
 
 (declare compile)
 (declare compile-registry)

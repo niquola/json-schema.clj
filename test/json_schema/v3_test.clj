@@ -73,6 +73,13 @@
         (is (= false (empty? (:errors res))))
         res)))
 
+  (u/with-server
+  (let [validator (compile {:id "http://localhost:1234/",
+                            :items {:id "folder/", :items {:$ref "folderInteger.json"}}})
+        res (validator [[1]])]
+    (is (= true (empty? (:errors res))))
+    res))
+
   )
 
 (deftest draft3-test
