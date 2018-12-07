@@ -9,7 +9,7 @@
 [![Dependency Status](https://www.versioneye.com/user/projects/56a0a4412c2fab0029000406/badge.svg?style=flat)](https://www.versioneye.com/user/projects/56a0a4412c2fab0029000406)
 
 
-Implementation JSON schema in clojure, which passes specs (https://github.com/json-schema/JSON-Schema-Test-Suite)
+Implementation JSON schema in Clojure, which passes specs (https://github.com/json-schema/JSON-Schema-Test-Suite)
 
 ## Usage
 
@@ -21,7 +21,7 @@ Implementation JSON schema in clojure, which passes specs (https://github.com/js
 
 ```
 
-## Parital support for v5
+## Partial support for v5
 
 * constant
 * contains
@@ -31,7 +31,7 @@ See https://github.com/json-schema/json-schema/wiki/v5-Proposals
 ## Road Map
 
 * errors formatting
-* add ability to custom keywords
+* add the ability to use custom keywords
 * performance tests
 * v5 support
 
