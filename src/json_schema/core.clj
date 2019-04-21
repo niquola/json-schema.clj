@@ -146,7 +146,6 @@
               (str "/")))))
 
 (defn- compile-schema [schema path c-ctx]
-  (println "comp" path)
   (let [schema-fn (cond
                     (= true schema)
                     (fn [ctx v] ctx)
@@ -1298,7 +1297,6 @@
 (defmethod schema-key
   :format
   [_ fmt schema path c-ctx]
-  (println "fmt" fmt)
   (if (fn? fmt)
     (fn [ctx v]
       (if-let [$fmt (fmt ctx)]

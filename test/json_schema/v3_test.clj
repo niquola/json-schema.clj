@@ -61,7 +61,7 @@
 
   "types can include schemas"
   (def tp-v (compile {:type ["array" {:type "object"}]}))
-  
+
   (is (empty? (:errors (tp-v {}))))
 
 
