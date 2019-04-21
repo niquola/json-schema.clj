@@ -59,12 +59,13 @@
                   "validation of URI References"
                   "format: uri-template"
                   "validation of IRIs"
+                  "validation of IRI References"
                   "validation of host names"
                   "validation of Relative JSON Pointers (RJP)"
                   "validation of internationalized host names"
                   "validation of binary-encoded media type documents"
                   "validation of binary string-encoding"
                   "validation of string-encoded content based on media type"
-                  "validation of IRI References"})
+                  })
   )
 

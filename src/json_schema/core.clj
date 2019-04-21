@@ -1292,36 +1292,44 @@
 (def format-fns
   {"regex" valid-regex?
    "uri"    valid-uri?
-   "date-time" valid-date-time? ;;#"^(\d{4})-(\d{2})-(\d{2})[tT\s](\d{2}):(\d{2}):(\d{2})(\.\d+)?(?:([zZ])|(?:(\+|\-)(\d{2}):(\d{2})))?$"
+   "date-time" valid-date-time?
    "json-pointer"   valid-pointer?})
 
 (defmethod schema-key
   :format
   [_ fmt schema path c-ctx]
+  (println "fmt" fmt)
   (if (fn? fmt)
     (fn [ctx v]
       (if-let [$fmt (fmt ctx)]
-        (if-let [regex (get format-regexps (if (keyword? $fmt) (name $fmt) $fmt))]
-          (if (and (string? v) (not (re-find regex v)))
-            (add-error :format ctx (str "expected format " $fmt))
+        (if-let [fmt-fn (and (or (string? $fmt) (keyword? $fmt))
+                             (get format-fns (name $fmt)))]
+          (if-let [err (fmt-fn v)]
+            (add-error :format ctx (str "expected format " $fmt ", but \n" err))
             ctx)
-          (add-error :format ctx (str "no format for " $fmt)))
+          (if-let [regex (get format-regexps (if (keyword? $fmt) (name $fmt) $fmt))]
+            (if (and (string? v) (not (re-find regex v)))
+              (add-error :format ctx (str "expected format " $fmt))
+              ctx)
+            (add-error :format ctx (str "no format for " $fmt))))
         ctx))
 
-    (if-let [fmt-fn (get format-fns fmt)]
-      (fn [ctx v]
-        (if (and v (string? v))
-          (if-let [err (fmt-fn v)]
-            (add-error :format ctx (str "expected format " fmt ", but \n" err))
-            ctx)
-          ctx))
-      (let [regex (get format-regexps (name fmt))]
+    (if (or (string? fmt) (keyword fmt))
+      (if-let [fmt-fn (get format-fns (name fmt))]
         (fn [ctx v]
-          (if (nil? regex)
-            (add-error :format ctx (str "Unknown format " fmt))
-            (if (and (string? v) (not (re-find regex v)))
-              (add-error :format ctx (str "expected format " fmt))
-              ctx)))))))
+          (if (and v (string? v))
+            (if-let [err (fmt-fn v)]
+              (add-error :format ctx (str "expected format " fmt ", but \n" err))
+              ctx)
+            ctx))
+        (let [regex (get format-regexps (name fmt))]
+          (fn [ctx v]
+            (if (nil? regex)
+              (add-error :format ctx (str "Unknown format " fmt))
+              (if (and (string? v) (not (re-find regex v)))
+                (add-error :format ctx (str "expected format " fmt))
+                ctx)))))
+      (assert false (pr-str fmt)))))
 
 (defmethod schema-key
   :pattern
