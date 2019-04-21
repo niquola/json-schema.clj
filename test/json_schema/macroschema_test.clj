@@ -25,13 +25,16 @@
          (:errors (sut/test tsch 1))))
 
   (is (= [{:desc "Expected an array, got 1" :path []}]
-         (:errors (sut/test {:type "array"} 1))))
+         (:errors (sut/test {:type "array"} 1))
+         ))
 
   (is (= [{:desc "Expected a string, got 1" :path []}]
-         (:errors (sut/test {:type "string"} 1))))
+         (:errors (sut/test {:type "string"} 1))
+         ))
 
-  (def tsch {:type ["object" "string"]})
-  (sut/test tsch 1)
+  ;; (def tsch {:type ["object" "string"]})
+  ;; (sut/test tsch 1)
+
 
 
   (sut/test {:properties {:a {:type "string"}}} {:a 1})
@@ -151,7 +154,7 @@
 
   )
 
-(deftest draft3-test
+#_(deftest draft3-test
   ;; (u/test-files (u/files "draft3" re-filter) #{"multiple extends" "ECMA 262 regex dialect recognition"})
   )
 

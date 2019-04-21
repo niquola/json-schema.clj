@@ -131,7 +131,7 @@
 
 (defmulti schema-type (fn [k] k))
 
-(defmulti schema-key (fn [k opts schema path regisry] (if (= :default k) :schemaDefault k)))
+(defmulti schema-key (fn [k opts schema path c-ctx] (if (= :default k) :schemaDefault k)))
 
 (defn build-ref [path]
   (str "#"
@@ -145,7 +145,8 @@
               (str/join "/")
               (str "/")))))
 
-(defn- compile-schema [schema path registry]
+(defn- compile-schema [schema path c-ctx]
+  (println "comp" path)
   (let [schema-fn (cond
                     (= true schema)
                     (fn [ctx v] ctx)
@@ -154,13 +155,16 @@
                     (fn [ctx v] (add-error :schema ctx (str "schema is 'false', which means it's always fails")))
 
                     (map? schema)
-                    (let [validators (doall
+                    (let [c-ctx' (if-let [id (or (:id schema) (:$id schema))]
+                                   (update c-ctx :ids (fn [x] (if x (conj x id) [id])))
+                                   c-ctx)
+                          validators (doall
                                       (reduce (fn [acc [k v]]
                                                 (let [v (or ($data-pointer v) v)] ;; check for $data
-                                                  (if-let [vf (schema-key k v schema path registry)]
+                                                  (if-let [vf (schema-key k v schema path c-ctx')]
                                                     (conj acc vf)
                                                     acc)))
-                                              [] (dissoc schema :title)))]
+                                              [] (dissoc schema :title :id :$id)))]
                       (fn [ctx v]
                         (let [pth (:path ctx)]
                           (reduce (fn [ctx vf]
@@ -168,7 +172,13 @@
                                   ctx validators))))
                     :else
                     (fn [ctx v] (add-error :schema ctx (str "Invalid schema " schema))))]
-    (let [ref (build-ref path)] (swap! registry update ref (fn [x] (if x x schema-fn))))
+    (let [ref (build-ref path)]
+      (update c-ctx :reg
+              (fn [reg]
+                (swap! reg update ref (fn [x] (if x x schema-fn)))
+                (when-let [id (or (:id schema) (:$id schema))]
+                  (when (str/starts-with? id "http")
+                    (swap! reg update id (fn [x] (if x x schema-fn))))))))
     schema-fn))
 
 (defmethod schema-type
@@ -211,7 +221,7 @@
       (add-error :date ctx "expected number")
       ctx)))
 
-(def uri-regexp #"^(https?|ftp|file)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]")
+(def uri-regexp #"^([^:]+)://[-a-zA-Z0-9+&@#/%?=~_|!:,.;]*[-a-zA-Z0-9+&@#/%=~_|]")
 
 (defmethod schema-type
   :uri
@@ -340,10 +350,10 @@
 
 (defmethod schema-key
   :type
-  [k opts schema path registry] 
+  [k opts schema path c-ctx] 
   (if (sequential? opts)
     (let [validators (->> opts
-                          (mapv (fn [o] (if (string? o) (schema-type (keyword o)) (compile-schema o (conj path :type) registry))))
+                          (mapv (fn [o] (if (string? o) (schema-type (keyword o)) (compile-schema o (conj path :type) c-ctx))))
                           doall)]
       (fn [ctx v]
         (if (some
@@ -356,18 +366,18 @@
 
 (defmethod schema-key
   :properties
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (when (map? props)
     (let [props-validators
           (doall (reduce (fn [acc [k v]]
-                           (assoc acc k (compile-schema v (into path [:properties (keyword k)]) registry)))
+                           (assoc acc k (compile-schema v (into path [:properties (keyword k)]) c-ctx)))
                          {} props))
           requireds (reduce (fn [acc [k v]]
                               (if (= true (:required v))
                                 (conj acc k)
                                 acc)) [] props)
           req-validator (when (not (empty? requireds))
-                          (schema-key :required requireds schema path registry))]
+                          (schema-key :required requireds schema path c-ctx))]
       (fn [ctx v]
         (let [pth (:path ctx)
               ctx (if req-validator (req-validator ctx v) ctx)]
@@ -379,7 +389,7 @@
 
 (defmethod schema-key
   :maxProperties
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :maxProperties 
     :applicable-value map?
@@ -393,7 +403,7 @@
 
 (defmethod schema-key
   :minProperties
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :minProperties
     :applicable-value map?
@@ -411,7 +421,7 @@
 
 (defmethod schema-key
   :multipleOf
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (cond
     (number? bound)
     (fn [ctx v]
@@ -436,7 +446,7 @@
 
 (defmethod schema-key
   :divisibleBy
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (cond
     (number? bound)
     (fn [ctx v]
@@ -468,7 +478,7 @@
 
 (defmethod schema-key
   :enum
-  [_ enum schema path registry]
+  [_ enum schema path c-ctx]
   (if (fn? enum)
     (fn [ctx v]
       (let [$enum (enum ctx)]
@@ -486,7 +496,7 @@
 
 
 (defn const-impl
-  [_ const schema path registry]
+  [_ const schema path c-ctx]
   (if (fn? const)
     (fn [ctx v]
       (let [$const (const ctx)]
@@ -506,17 +516,20 @@
 
 (defmethod schema-key
   :discriminator
-  [_ prop schema path registry]
+  [_ prop schema path c-ctx]
   (fn [ctx v]
     (if-let [tp (get v (keyword prop))]
-      (if-let [validator (get @registry (str "#/definitions/" tp))]
+      (if-let [validator (-> c-ctx
+                             :reg
+                             deref
+                             (get (str "#/definitions/" tp)))]
         (validator ctx v)
         (add-error :discriminator ctx (str "Could not resolve #/definitions/" tp)))
       ctx)))
 
 (defmethod schema-key
   :exclusiveProperties
-  [_ ex-props schema path registry]
+  [_ ex-props schema path _]
   (fn [ctx v]
     (if (map? v)
       (reduce
@@ -538,7 +551,7 @@
 
 (defmethod schema-key
   :dependencies
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (assert (map? props))
   (let [props-validators
         (doall (reduce (fn [acc [k v]]
@@ -558,7 +571,7 @@
                                         ctx)))
 
                                   (or (map? v) (boolean? v))
-                                  (compile-schema v (conj path :dependencies k) registry)
+                                  (compile-schema v (conj path :dependencies k) c-ctx)
                                   
                                   :else (fn [ctx v] ctx))))
                        {} props))]
@@ -574,10 +587,10 @@
 
 (defmethod schema-key
   :patternProperties
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (let [props-map
         (doall (reduce (fn [acc [k v]]
-                         (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties (name k)) registry)))
+                         (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties (name k)) c-ctx)))
                        {} props))]
     (fn [ctx v]
       (if-not (map? v)
@@ -597,11 +610,11 @@
 
 (defmethod schema-key
   :patternGroups
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (let [props-map
         (doall (reduce (fn [acc [k {sch :schema :as g}]]
                          (assoc acc (re-pattern (name k))
-                                (assoc g :schema (compile-schema sch (conj path :patternGroups) registry))))
+                                (assoc g :schema (compile-schema sch (conj path :patternGroups) c-ctx))))
                        {} props))]
     (fn [ctx v]
       (if-not (map? v)
@@ -632,13 +645,13 @@
 
 (defmethod schema-key
   :extends
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (let [validators (doall
                     (->>
                      (cond (sequential? props) props
                            (map? props) [props]
                            :else (assert false (str "Not impl extends " props)))
-                     (mapv (fn [o] (compile-schema o (conj path :extends) registry)))))]
+                     (mapv (fn [o] (compile-schema o (conj path :extends) c-ctx)))))]
     (fn [ctx v]
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
@@ -646,8 +659,8 @@
 
 (defmethod schema-key
   :allOf
-  [_ options schema path registry]
-  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :allOf) registry)) options))]
+  [_ options schema path c-ctx]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :allOf) c-ctx)) options))]
     (fn [ctx v]
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
@@ -655,15 +668,15 @@
 
 (defmethod schema-key
   :switch
-  [_ switch schema path registry]
+  [_ switch schema path c-ctx]
   (let [clauses (->> switch
                      (mapv (fn [clause]
                              (assoc clause
                                     :compiled
                                     (cond-> {}
-                                      (:if clause) (assoc :if (compile-schema (:if clause) path registry))
+                                      (:if clause) (assoc :if (compile-schema (:if clause) path c-ctx))
                                       (and (:then clause) (map? (:then clause)))
-                                      (assoc :then (compile-schema (:then clause) path registry))))))
+                                      (assoc :then (compile-schema (:then clause) path c-ctx))))))
                      doall)]
     (fn [ctx v]
       (let [pth (:path ctx)]
@@ -715,10 +728,10 @@
 
 (defmethod schema-key
   :if
-  [_ if-expr {th :then el :else :as schema} path registry]
-  (let [pred-v (compile-schema if-expr path registry)
-        th-v   (compile-schema (or th true) path registry)
-        el-v   (compile-schema (or el true) path registry)]
+  [_ if-expr {th :then el :else :as schema} path c-ctx]
+  (let [pred-v (compile-schema if-expr path c-ctx)
+        th-v   (compile-schema (or th true) path c-ctx)
+        el-v   (compile-schema (or el true) path c-ctx)]
     (fn [ctx v]
       (if (empty? (:errors (pred-v ctx v)))
         (th-v ctx v)
@@ -726,19 +739,19 @@
 
 (defmethod schema-key
   :then
-  [_ if-expr schema path registry]
+  [_ if-expr schema path c-ctx]
   nil)
 
 (defmethod schema-key
   :else
-  [_ if-expr schema path registry]
+  [_ if-expr schema path c-ctx]
   nil)
 
 
 (defmethod schema-key
   :not
-  [_ subschema schema path registry]
-  (let [validator (compile-schema subschema (conj path :not) registry)]
+  [_ subschema schema path c-ctx]
+  (let [validator (compile-schema subschema (conj path :not) c-ctx)]
     (fn [ctx v]
       (let [{errs :errors} (validator (assoc ctx :errors []) v)]
         (if (empty? errs)
@@ -747,10 +760,10 @@
 
 (defmethod schema-key
   :disallow
-  [_ subschema schema path registry]
+  [_ subschema schema path c-ctx]
   (let [validators (let [subsch (if (sequential? subschema) subschema [subschema])]
                      (doall (mapv (fn [sch]
-                              (compile-schema (if (string? sch) {:type sch} sch) (conj path :disallow) registry))
+                              (compile-schema (if (string? sch) {:type sch} sch) (conj path :disallow) c-ctx))
                             subsch)))]
     (fn [ctx v]
       (if (some (fn [vl] (-> (vl ctx v) :errors empty?)) validators)
@@ -759,8 +772,8 @@
 
 (defmethod schema-key
   :anyOf
-  [_ options schema path registry]
-  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :anyOf) registry)) options))]
+  [_ options schema path c-ctx]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :anyOf) c-ctx)) options))]
     (fn [ctx v]
       (if (some (fn [validator]
                    (let [res (validator (assoc ctx :errors []) v)]
@@ -771,8 +784,8 @@
 
 (defmethod schema-key
   :oneOf
-  [_ options schema path registry]
-  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :oneOf) registry)) options))]
+  [_ options schema path c-ctx]
+  (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :oneOf) c-ctx)) options))]
     (fn [ctx v]
       (loop [cnt 0
              res nil
@@ -793,7 +806,7 @@
   [_ ap {props :properties
          pat-props :patternProperties
          pat-g-props :patternGroups
-         :as schema} path registry]
+         :as schema} path c-ctx]
   (let [props-keys (set (keys props))
         pat-props-regex (->> (keys (or pat-props {}))
                              (concat (keys (or pat-g-props {})))
@@ -816,7 +829,7 @@
           ctx))
 
       (map? ap)
-      (let [ap-validator (compile-schema ap (conj path :additionalProperties) registry)]
+      (let [ap-validator (compile-schema ap (conj path :additionalProperties) c-ctx)]
         (fn [ctx v]
           (if (map? v)
             (let [v-keys (set (keys v))
@@ -840,7 +853,7 @@
 
 (defmethod schema-key
   :required
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (cond
     (sequential? props)
     (fn [ctx v]
@@ -873,7 +886,7 @@
 
 (defmethod schema-key
   :patternRequired
-  [_ props schema path registry]
+  [_ props schema path c-ctx]
   (cond
     (sequential? props)
     (let [re-props (set (map (fn [x] (re-pattern (name x))) props))]
@@ -896,7 +909,7 @@
 ;; handled in items
 (defmethod schema-key
   :additionalItems
-  [_ items schema path registry]
+  [_ items schema path _]
   nil)
 
 
@@ -921,52 +934,59 @@
   (uri-and-fragment "http://x.y.z/rootschema.json")
   )
 
-(defmethod schema-key
-  :id
-  [_ id schema path registry]
-  (println "ID:" id))
 
-(defn external-schema [ref registry]
+(defn external-schema [ref c-ctx]
   (let [[uri frag] (uri-and-fragment ref)
+        registry (:reg c-ctx)
         cache (or (get @registry uri)
-                  (when-let [res (try (slurp ref) (catch Exception e))]
-                    (let [remote-registry (compile-registry (json/parse-string res keyword))]
+                  (if-let [res (try (-> (slurp uri)
+                                        (json/parse-string keyword))
+                                    (catch Exception e
+                                      (println "ERROR:" e)))]
+                    (let [remote-registry (compile-registry res)]
+                      (println "schema loaded from" uri)
                       (swap! registry assoc uri remote-registry)
-                      remote-registry)))]
+                      remote-registry)
+                    (println "Could not load " uri)))]
     (and cache (get @cache frag))))
+
+(defn mk-ref-with-ids [r ids]
+  ;; (println "Mkref " ids r)
+  (if (str/starts-with? r "#")
+    r
+    (loop [pth []
+           [it & its] (reverse ids)]
+      (let [sub-pth (str/split it #"/")
+            new-pth (into
+                     (if (str/ends-with? it "/")
+                       sub-pth
+                       (into [] (butlast sub-pth)))
+                     pth)]
+        (if (or (empty? its) (str/starts-with? it "http"))
+          (str (str/join "/" new-pth) "/" r)
+          (recur new-pth its))))))
 
 (defmethod schema-key
   :$ref
-  [_ r schema path registry]
-  (let [r (decode-json-pointer r)]
-    (if (str/starts-with? r "http")
-      (if-let [validator (external-schema r registry)]
-        (fn [ctx v]
-          (let [res (validator ctx v)]
-            (assoc ctx :errors (into (:errors ctx) (:errors res)))))
-        (do 
-          (println "WARN:"  "Could not resolve $ref " r)
-          (fn [ctx v]
-            (add-error :$ref ctx (str "Could not resolve $ref " r)))))
-      (do
-        (when-not (get @registry r)
-          (swap! registry assoc r :lock)
-          (swap! registry assoc r (let [ref-pth (json-pointer-to-path r)
-                                        root-sch (:original @registry)
-                                        ref-sch (resolve-pointer root-sch ref-pth)]
-                                    (if (not (nil? ref-sch))
-                                      (compile-schema ref-sch ref-pth registry)
-                                      (do 
-                                        (println "WARNING: could not resolve $ref " r " in " root-sch)
-                                        (fn [ctx v] (add-error :$ref ctx (str "Could not resolve $ref = " r))))))))
-        (fn [ctx v]
-          (if-let [val (get @registry r)]
-            (val ctx v)
-            (add-error :$ref ctx (str "Could not resolve $ref = " r))))))))
+  [_ r schema path c-ctx]
+  (let [ids (:ids c-ctx)
+        r (if ids (mk-ref-with-ids r ids) r)
+        r (decode-json-pointer r)
+        registry (:reg c-ctx)]
+    ;; (println "Pointer" r " from " path " ids " ids)
+    (if-let [validator (and (str/starts-with? r "http")
+                            (external-schema r c-ctx))]
+      (fn [ctx v]
+        (let [res (validator ctx v)]
+          (assoc ctx :errors (into (:errors ctx) (:errors res)))))
+      (fn [ctx v]
+        (if-let [val (get @registry r)]
+          (val ctx v)
+          (add-error :$ref ctx (str "Could not resolve $ref = " r)))))))
 
 (defmethod schema-key
   :maximum
-  [_ bound {ex :exclusiveMaximum} path registry]
+  [_ bound {ex :exclusiveMaximum} path c-ctx]
   (let [ex (or ($data-pointer ex) ex)]
     (compile-comparator
      {:name :maximum
@@ -982,7 +1002,7 @@
 
 (defmethod schema-key
   :exclusiveMaximum
-  [_ bound {m :maximum} path registry]
+  [_ bound {m :maximum} path c-ctx]
   (let [m (or ($data-pointer m) m)]
     (when (nil? m)
       (compile-comparator
@@ -1001,7 +1021,7 @@
 
 (defmethod schema-key
   :minimum
-  [_ bound {ex :exclusiveMinimum} path registry]
+  [_ bound {ex :exclusiveMinimum} path c-ctx]
   (let [ex (or ($data-pointer ex) ex)]
     (compile-comparator
      {:name :minimum
@@ -1017,7 +1037,7 @@
 
 (defmethod schema-key
   :exclusiveMinimum 
-  [_ bound {m :minimum} path registry]
+  [_ bound {m :minimum} path c-ctx]
   (let [m (or ($data-pointer m) m)]
     (when (nil? m)
       (compile-comparator
@@ -1041,7 +1061,7 @@
 
 (defmethod schema-key
   :maxLength
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :maxLength
     :applicable-value string?
@@ -1055,7 +1075,7 @@
 
 (defmethod schema-key
   :minLength
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :minLength
     :applicable-value string?
@@ -1091,7 +1111,7 @@
 
 (defmethod schema-key
   :formatMaximum
-  [_ bound {fmt :format ex :exclusiveFormatMaximum} path registry]
+  [_ bound {fmt :format ex :exclusiveFormatMaximum} path c-ctx]
   (when-not (= "unknown" fmt)
     (let [ex (or ($data-pointer ex) ex)]
       (compile-comparator
@@ -1112,7 +1132,7 @@
 
 (defmethod schema-key
   :formatMinimum
-  [_ bound {fmt :format ex :exclusiveFormatMinimum} path registry]
+  [_ bound {fmt :format ex :exclusiveFormatMinimum} path c-ctx]
   (when-not (= "unknown" fmt)
     (let [ex (or ($data-pointer ex) ex)]
       (compile-comparator
@@ -1130,13 +1150,13 @@
 
 (defmethod schema-key
   :schemaDefault
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   ;; nop in json-schema
   )
 
 (defmethod schema-key
   :uniqueItems
-  [k uniq schema path registry]
+  [k uniq schema path c-ctx]
   (cond
     (= true uniq)
     (fn [ctx v]
@@ -1162,29 +1182,29 @@
 
 (defmethod schema-key
   :default
-  [k subschema schema path registry]
+  [k subschema schema path c-ctx]
   (println "Unknown schema" k ": " subschema " " path)
   (when (and (empty? path) (map? subschema))
-    (compile-schema subschema (conj path k) registry))
+    (compile-schema subschema (conj path k) c-ctx))
   nil)
 
 (defmethod schema-key
   :description
-  [k desc schema path registry]
+  [k desc schema path c-ctx]
   ;; nop
   nil)
 
 (defmethod schema-key
   :definitions
-  [k subschema schema path registry]
+  [k subschema schema path c-ctx]
   (when (map? subschema)
     (doseq [[k sch] subschema]
-      (when (map? sch)
-        (compile-schema sch (into path [:definitions (keyword k)]) registry)))))
+      (when (or (map? sch) (boolean? sch))
+        (compile-schema sch (into path [:definitions (keyword k)]) c-ctx)))))
 
 (defmethod schema-key
   :maxItems
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :maxItems
     :applicable-value sequential?
@@ -1198,7 +1218,7 @@
 
 (defmethod schema-key
   :minItems
-  [_ bound schema path registry]
+  [_ bound schema path c-ctx]
   (compile-comparator
    {:name :minItems
     :applicable-value sequential?
@@ -1254,17 +1274,15 @@
                 ) nil))))
     "json pointer should be string"))
 
-
 (defn valid-uri? [x]
-  (try 
-    (java.net.URL. x)
-    nil
-    (catch Exception e
-      (.getMessage e))))
-
+  (cond
+    (str/starts-with? x "/") x
+    (str/starts-with? x "\\") x
+    (not (str/includes? x ":")) x
+    (str/includes? x " ") x))
 
 (defn valid-date-time? [x]
-  (try 
+  (try
     (java.time.LocalDate/parse x java.time.format.DateTimeFormatter/ISO_DATE_TIME)
     nil
     (catch Exception e
@@ -1279,7 +1297,7 @@
 
 (defmethod schema-key
   :format
-  [_ fmt schema path registry]
+  [_ fmt schema path c-ctx]
   (if (fn? fmt)
     (fn [ctx v]
       (if-let [$fmt (fmt ctx)]
@@ -1307,7 +1325,7 @@
 
 (defmethod schema-key
   :pattern
-  [_ fmt schema path registry]
+  [_ fmt schema path c-ctx]
   (cond
     (string? fmt)
     (let [regex (re-pattern fmt)]
@@ -1331,11 +1349,10 @@
           :else ctx)))))
 
 
-
 (defmethod schema-key
   :contains
-  [_ subsch schema path registry]
-  (let [validator (compile-schema subsch path registry)]
+  [_ subsch schema path c-ctx]
+  (let [validator (compile-schema subsch path c-ctx)]
     (fn [ctx v]
       (if (and (sequential? v)
                (not (some (fn [vv]
@@ -1347,8 +1364,8 @@
 
 (defmethod schema-key
   :propertyNames
-  [_ prop-schema schema path registry]
-  (let [validator (compile-schema prop-schema path registry)]
+  [_ prop-schema schema path c-ctx]
+  (let [validator (compile-schema prop-schema path c-ctx)]
     (fn [ctx v]
       (if (map? v)
         (reduce
@@ -1375,16 +1392,16 @@
 
 (defmethod schema-key
   :deferred
-  [_ annotation schema path registry]
+  [_ annotation schema path c-ctx]
   (fn [ctx v]
     (add-deferred ctx v annotation)))
 
 (defmethod schema-key
   :items
-  [_ items {ai :additionalItems :as schema} path registry]
+  [_ items {ai :additionalItems :as schema} path c-ctx]
   (cond
     (or (map? items) (boolean? items))
-    (let [validator (compile-schema items (conj path :items) registry)]
+    (let [validator (compile-schema items (conj path :items) c-ctx)]
       (fn [ctx vs]
         (if-not (sequential? vs)
           ctx
@@ -1399,9 +1416,9 @@
     (sequential? items)
     (let [validators (doall (map-indexed (fn [idx x]
                                            (if (or (map? x) (boolean? x))
-                                             (compile-schema x (into path [:items idx]) registry)
+                                             (compile-schema x (into path [:items idx]) c-ctx)
                                              (assert false (pr-str "Items:" items)))) items))
-          ai-validator (when-not (or (nil? ai) (boolean? ai)) (compile-schema ai path registry))]
+          ai-validator (when-not (or (nil? ai) (boolean? ai)) (compile-schema ai path c-ctx))]
       (fn [ctx vs]
         (if-not (sequential? vs)
           (add-error :items ctx "expected array")
@@ -1437,7 +1454,8 @@
 
 
 (defn compile [schema & [ctx]]
-  (let [vf (compile-schema schema [] (atom {:original schema}))
+  (let [vf (compile-schema schema [] {:reg (atom {:original schema})
+                                      :root-id (or (:id schema) (:$id schema))})
         ctx (merge {:path [] :errors [] :deferreds [] :warnings []} (or ctx {}))]
     (fn [v & [lctx]]
       (let [res (vf (merge (assoc ctx :doc v) (or lctx {})) v)]
@@ -1446,15 +1464,14 @@
           (assert false (str "Unexpected validator result " res)))))))
 
 (defn compile-registry [schema & [ctx]]
-  (let [registry (atom {}) 
-        vf (compile-schema schema [] registry)]
+  (let [registry (atom {"#" :lock})
+        vf (compile-schema schema [] {:reg registry})]
+    (swap! registry assoc "#" vf)
     registry))
 
 (defn validate [schema value & [ctx]]
   (let [validator (compile schema ctx)]
     (validator value ctx)))
-
-
 
 (comment
 

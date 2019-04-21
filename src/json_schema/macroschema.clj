@@ -114,7 +114,7 @@
     lmbd))
 
 
-;; to track $ref 
+;; to track $ref
 ;; we create refs atom which is filled by compilation
 ;; and used in validation
 (defn compile-schema [sch]

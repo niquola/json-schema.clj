@@ -38,9 +38,33 @@
     res)
 
 
+  "an array of schemas for items"
+  ;; not sure
+  #_(let [validator (compile {:items [{:type "integer"} {:type "string"}]})
+        res (validator {0 "invalid", 1 "valid", :length 2})]
+    (is (= true (empty? (:errors res))))
+    res)
+
   )
 
+
 (deftest draft7-test
-  (u/test-files (u/files "draft7" re-filter))
+  (u/test-files (u/files "draft7" re-filter)
+                #{"an array of schemas for items"
+                  "some languages do not distinguish between different types of numeric value"
+                  "ECMA 262 regex non-compliance"
+                  "allOf with base schema"
+                  "ref overrides any sibling keywords"
+
+                  "validation of URI References"
+                  "format: uri-template"
+                  "validation of IRIs"
+                  "validation of host names"
+                  "validation of Relative JSON Pointers (RJP)"
+                  "validation of internationalized host names"
+                  "validation of binary-encoded media type documents"
+                  "validation of binary string-encoding"
+                  "validation of string-encoded content based on media type"
+                  "validation of IRI References"})
   )
 

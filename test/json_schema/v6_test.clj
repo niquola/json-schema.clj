@@ -69,6 +69,13 @@
     (is (= false (empty? (:errors res))))
     res)
 
+
+  "$ref to boolean schema true"
+  (let [validator (compile {:$ref "#/definitions/bool", :definitions {:bool true}})
+        res (validator "foo")]
+    (is (= true (empty? (:errors res))))
+    res)
+
   )
 
 (deftest draft6-test
@@ -76,6 +83,10 @@
                 #{"an array of schemas for items"
                   "ECMA 262 regex non-compliance"
                   "some languages do not distinguish between different types of numeric value"
-                  "validation of URIs"}
+                  "ref overrides any sibling keywords"
+                  "allOf with base schema"
+                  "validation of URIs"
+                  "format: uri-template"
+                  "validation of URI References"}
                 ))
 

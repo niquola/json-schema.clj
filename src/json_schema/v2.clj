@@ -47,7 +47,7 @@
                           (cond-> {:path (:path ctx)
                                    :by (:path env)
                                    :message message}
-                            value (assoc :vlaue value)))))))
+                            value (assoc :value value)))))))
 
 
 ;; schema is function ctx v => ctx (with errors)
@@ -69,7 +69,6 @@
 (declare compile-schema)
 
 (defmulti compile-type (fn [{k :key}] k))
-
 
 
 (defmethod compile-type
@@ -103,7 +102,15 @@
                                                   (if (string? s)
                                                     (compile-type (assoc env :key (keyword s) :path (conj pth i)))
                                                     (compile-schema (assoc env :schema s :parent tp :path (conj pth i))))))
-                                   doall)])
+                                   doall)]
+                       (fn [ctx v]
+                         (loop [[vl & vls :as vs] vs]
+                           (if-not vs
+                             (add-error env ctx :type (str "expected type " (str/join " or " (mapv #(str "[" % "]") tp))) v)
+                             (let [{errs :errors} (vl (assoc ctx :errors []) v)]
+                               (if (empty? errs)
+                                 ctx
+                                 (recur vls)))))))
     :else (compile-schema env)))
 
 (defn- keys-validators [{sch :schema s-pth :path :as env}]

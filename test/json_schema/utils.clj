@@ -55,17 +55,18 @@
                        (doseq [{:keys [schema tests description] :as scenario} test-case]
                          (when-not (contains? skip-list description)
                            (testing (pr-str description)
-                             ;; (println "Test:" description)
-                             ;; (println "Schema: " schema)
+                             (println "Test:" description)
+                             (println "Schema: " schema)
                              (let [validator (compile schema)]
                                (doseq [{:keys [data valid] :as test-item} tests]
                                  (let [result (validator  data)]
-                                   ;; (println test-item)
+                                   (println test-item)
                                    (is (= valid (empty? (:errors result)))
                                        (str
                                         "(let [validator (compile " (pp schema) ")
   res (validator " (pp data) " )
 ]
-  (is (= "valid" (empty? (:errors res))))
+  (is (= "valid" (empty? (:errors " (pp result) "))))
 res
 )"))))))))))))))
+
