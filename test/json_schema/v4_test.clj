@@ -83,9 +83,10 @@
   (u/test-files (u/files "draft4" re-filter)
                 #{"an array of schemas for items"
                   "ECMA 262 regex non-compliance"
-                  "base URI change - change folder in subschema"
+                  ;; "base URI change - change folder in subschema"
                   "ref overrides any sibling keywords"
-                  "escaped pointer ref"
+                  ;; "escaped pointer ref"
                   "allOf with base schema"
-                  "validation of URIs"}))
+                  ;; "validation of URIs"
+                  }))
 

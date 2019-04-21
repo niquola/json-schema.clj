@@ -912,7 +912,8 @@
   nil)
 
 
-(decode-json-pointer "#/tilda~0field")
+(comment 
+  (decode-json-pointer "#/tilda~0field"))
 
 (defn to-uri [x]
   (try (java.net.URI. x)
@@ -973,8 +974,7 @@
         r (decode-json-pointer r)
         registry (:reg c-ctx)]
     ;; (println "Pointer" r " from " path " ids " ids)
-    (if-let [validator (and (str/starts-with? r "http")
-                            (external-schema r c-ctx))]
+    (if-let [validator (and (str/starts-with? r "http") (external-schema r c-ctx))]
       (fn [ctx v]
         (let [res (validator ctx v)]
           (assoc ctx :errors (into (:errors ctx) (:errors res)))))
@@ -1235,8 +1235,8 @@
    "date"      #"^(\d{4})-(\d{2})-(\d{2})$"
    "time"      #"^(\d{2}):(\d{2}):(\d{2})(\.\d+)?([zZ]|(\+|\-)(\d{2}):(\d{2}))?$"
    "email"     #"^[\w!#$%&'*+/=?`{|}~^-]+(?:\.[\w!#$%&'*+/=?`{|}~^-]+)*@(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,6}$"
-   "hostname"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
-   "host-name"  #"^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}$"
+   "hostname"  #"^([-a-zA-Z0-9]{0,64}\.)+[-a-zA-Z0-9]{0,64}$"
+   "host-name" #"^([-a-zA-Z0-9]{0,64}\.)+[-a-zA-Z0-9]{0,64}$"
    "ipv4"      #"^(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$"
    "ipv6"      #"^(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))$"
    "color"     #"^(#(?:[0-9a-fA-F]{2}){2,3}|#[0-9a-fA-F]{3}|(?:rgba?|hsla?)\((?:\d+%?(?:deg|rad|grad|turn)?(?:,|\s)+){2,3}[\s\/]*[\d\.]+%?\)|black|silver|gray|white|maroon|red|purple|fuchsia|green|lime|olive|yellow|navy|blue|teal|aqua|orange|aliceblue|antiquewhite|aquamarine|azure|beige|bisque|blanchedalmond|blueviolet|brown|burlywood|cadetblue|chartreuse|chocolate|coral|cornflowerblue|cornsilk|crimson|darkblue|darkcyan|darkgoldenrod|darkgray|darkgreen|darkgrey|darkkhaki|darkmagenta|darkolivegreen|darkorange|darkorchid|darkred|darksalmon|darkseagreen|darkslateblue|darkslategray|darkslategrey|darkturquoise|darkviolet|deeppink|deepskyblue|dimgray|dimgrey|dodgerblue|firebrick|floralwhite|forestgreen|gainsboro|ghostwhite|gold|goldenrod|greenyellow|grey|honeydew|hotpink|indianred|indigo|ivory|khaki|lavender|lavenderblush|lawngreen|lemonchiffon|lightblue|lightcoral|lightcyan|lightgoldenrodyellow|lightgray|lightgreen|lightgrey|lightpink|lightsalmon|lightseagreen|lightskyblue|lightslategray|lightslategrey|lightsteelblue|lightyellow|limegreen|linen|mediumaquamarine|mediumblue|mediumorchid|mediumpurple|mediumseagreen|mediumslateblue|mediumspringgreen|mediumturquoise|mediumvioletred|midnightblue|mintcream|mistyrose|moccasin|navajowhite|oldlace|olivedrab|orangered|orchid|palegoldenrod|palegreen|paleturquoise|palevioletred|papayawhip|peachpuff|peru|pink|plum|powderblue|rosybrown|royalblue|saddlebrown|salmon|sandybrown|seagreen|seashell|sienna|skyblue|slateblue|slategray|slategrey|snow|springgreen|steelblue|tan|thistle|tomato|turquoise|violet|wheat|whitesmoke|yellowgreen|rebeccapurple)$"
@@ -1274,11 +1274,26 @@
     "json pointer should be string"))
 
 (defn valid-uri? [x]
-  (cond
-    (str/starts-with? x "/") x
-    (str/starts-with? x "\\") x
-    (not (str/includes? x ":")) x
-    (str/includes? x " ") x))
+  (when (or
+       (str/starts-with? x "/")
+       (str/starts-with? x "\\")
+       (not (str/includes? x ":"))
+       (str/includes? x " ")
+       (re-matches #"^http(s)?://\d+:.*" x))
+    x))
+
+(defn valid-uri-reference? [x]
+  (when (or (str/starts-with? x "\\")
+            (str/includes? x "\\")
+            (str/includes? x " "))
+    x))
+
+
+
+(defn valid-uri-template? [x]
+  (when (re-find #"\{[^}]+$" x)
+    x))
+
 
 (defn valid-date-time? [x]
   (try
@@ -1291,6 +1306,10 @@
 (def format-fns
   {"regex" valid-regex?
    "uri"    valid-uri?
+   "uri-reference"    valid-uri-reference?
+   "uri-template"    valid-uri-template?
+   "iri"    valid-uri?
+   "iri-reference"    valid-uri-reference?
    "date-time" valid-date-time?
    "json-pointer"   valid-pointer?})
 
@@ -1303,7 +1322,7 @@
         (if-let [fmt-fn (and (or (string? $fmt) (keyword? $fmt))
                              (get format-fns (name $fmt)))]
           (if-let [err (fmt-fn v)]
-            (add-error :format ctx (str "expected format " $fmt ", but \n" err))
+            (add-error :format ctx (str "expected format " $fmt ", but [" err "]"))
             ctx)
           (if-let [regex (get format-regexps (if (keyword? $fmt) (name $fmt) $fmt))]
             (if (and (string? v) (not (re-find regex v)))
@@ -1317,7 +1336,7 @@
         (fn [ctx v]
           (if (and v (string? v))
             (if-let [err (fmt-fn v)]
-              (add-error :format ctx (str "expected format " fmt ", but \n" err))
+              (add-error :format ctx (str "expected format " fmt ", but [" err "]"))
               ctx)
             ctx))
         (let [regex (get format-regexps (name fmt))]

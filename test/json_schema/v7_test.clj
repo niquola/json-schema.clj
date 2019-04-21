@@ -2,7 +2,8 @@
   (:require
    [json-schema.utils :as u]
    [json-schema.core :refer :all]
-   [clojure.test :refer :all]))
+   [clojure.test :refer :all]
+   [clojure.string :as str]))
 
 (def re-filter #"^.*$")
 
@@ -45,6 +46,21 @@
     (is (= true (empty? (:errors res))))
     res)
 
+
+  "validation of URI References"
+  (let [validator (compile {:format "uri-reference"})
+        res (validator "\\\\WINDOWS\\fileshare")]
+    (is (= false (empty? (:errors res))))
+    res)
+
+  
+
+  "format: uri-template"
+  (let [validator (compile {:format "uri-template"})
+        res (validator "http://example.com/dictionary/{term:1}/{term")]
+    (is (= false (empty? (:errors res))))
+    res)
+
   )
 
 
@@ -56,11 +72,11 @@
                   "allOf with base schema"
                   "ref overrides any sibling keywords"
 
-                  "validation of URI References"
-                  "format: uri-template"
-                  "validation of IRIs"
-                  "validation of IRI References"
-                  "validation of host names"
+                  ;; "validation of URI References"
+                  ;; "format: uri-template"
+                  ;; "validation of IRIs"
+                  ;; "validation of IRI References"
+                  ;; "validation of host names"
                   "validation of Relative JSON Pointers (RJP)"
                   "validation of internationalized host names"
                   "validation of binary-encoded media type documents"

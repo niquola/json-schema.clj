@@ -88,6 +88,7 @@
                 #{"multiple extends"
                   "ECMA 262 regex dialect recognition"
                   "ref overrides any sibling keywords"
-                  "change resolution scope"
-                  "remote ref, containing refs itself"}))
+                  ;; "change resolution scope"
+                  ;; "remote ref, containing refs itself"
+                  }))
 

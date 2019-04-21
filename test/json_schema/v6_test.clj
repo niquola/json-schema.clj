@@ -85,8 +85,9 @@
                   "some languages do not distinguish between different types of numeric value"
                   "ref overrides any sibling keywords"
                   "allOf with base schema"
-                  "validation of URIs"
-                  "format: uri-template"
-                  "validation of URI References"}
+                  ;; "validation of URIs"
+                  ;; "format: uri-template"
+                  ;; "validation of URI References"
+                  }
                 ))
 
