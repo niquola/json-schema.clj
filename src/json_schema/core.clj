@@ -381,9 +381,10 @@
         (let [pth (:path ctx)
               ctx (if req-validator (req-validator ctx v) ctx)]
           (reduce (fn [ctx [k vf]]
-                    (if-let [vv (get v k)]
-                      (vf (assoc ctx :path (conj pth k)) vv)
-                      ctx))
+                    (let [vv (get v k)]
+                      (if (some? vv)
+                        (vf (assoc ctx :path (conj pth k)) vv)
+                        ctx)))
                   ctx props-validators))))))
 
 (defmethod schema-key
@@ -492,6 +493,7 @@
       (if-not (some (fn [ev] (json-compare ev v)) enum)
         (add-error :enum ctx (str "expeceted one of " (str/join ", " enum)))
         ctx))))
+
 
 
 (defn const-impl

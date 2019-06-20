@@ -1,4 +1,4 @@
-(defproject json-schema "0.2.0-RC8"
+(defproject json-schema "0.2.0-RC9"
   :description "Conformant json-schema implementation"
   :url "https://github.com/niquola/json-schema.clj "
   :license {:name "Eclipse Public License"

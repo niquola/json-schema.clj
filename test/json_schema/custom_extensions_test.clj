@@ -30,6 +30,14 @@
            (:errors (validate schema-1 {:type "Role" :name "nicola"}))))
 
 
+    (is (not (empty?
+           (:errors
+            (validate {:type "object"
+                       :properties {:bool {:const true}}
+                       :required ["bool"]}
+                      {:bool false}))
+           )))
+
     ))
 
 
