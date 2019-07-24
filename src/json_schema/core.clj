@@ -487,11 +487,11 @@
             ctx
             (add-error :enum ctx (str "could not enum by " $enum)))
           (if-not (some (fn [ev] (json-compare ev v)) $enum)
-            (add-error :enum ctx (str "expeceted one of " (str/join ", " $enum)))
+            (add-error :enum ctx (str "expected one of " (str/join ", " $enum)))
             ctx))))
     (fn [ctx v]
       (if-not (some (fn [ev] (json-compare ev v)) enum)
-        (add-error :enum ctx (str "expeceted one of " (str/join ", " enum)))
+        (add-error :enum ctx (str "expected one of " (str/join ", " enum)))
         ctx))))
 
 
@@ -502,11 +502,11 @@
     (fn [ctx v]
       (let [$const (const ctx)]
         (if-not (json-compare $const v)
-          (add-error :constant ctx (str "expeceted " $const ", but " v))
+          (add-error :constant ctx (str "expected " $const ", but " v))
           ctx)))
     (fn [ctx v]
       (if-not (json-compare const v)
-        (add-error :constant ctx (str "expeceted " const ", but " v))
+        (add-error :constant ctx (str "expected " const ", but " v))
         ctx))))
 
 (defmethod schema-key :constant
@@ -794,11 +794,11 @@
         (if (empty? validators)
           (if (= 1 cnt)
             (update ctx :deferreds (fn [x] (into x (or (:deferreds res) []))))
-            (add-error :oneOf ctx (str "expeceted one of " options ", but no one is valid")))
+            (add-error :oneOf ctx (str "expected one of " options ", but no one is valid")))
           (let [new-res ((first validators) (assoc ctx :errors [] :deferreds []) v)]
             (if (empty? (:errors new-res))
               (if (> cnt 0)
-                (add-error :oneOf ctx (str "expeceted one of " options ", but more then one are valid"))
+                (add-error :oneOf ctx (str "expected one of " options ", but more then one are valid"))
                 (recur (inc cnt) new-res (rest validators)))
               (recur cnt res (rest validators)))))))))
 

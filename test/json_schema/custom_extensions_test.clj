@@ -23,10 +23,10 @@
 
     (is (empty? (:errors (validate schema-1 {:type "User" :name "nicola"}))))
 
-    (is (= [{:path [:name], :message "expeceted nicola, but ivan"}]
+    (is (= [{:path [:name], :message "expected nicola, but ivan"}]
            (:errors (validate schema-1 {:type "User" :name "ivan"}))))
 
-    (is (= [{:path [:name], :message "expeceted admin, but nicola"}]
+    (is (= [{:path [:name], :message "expected admin, but nicola"}]
            (:errors (validate schema-1 {:type "Role" :name "nicola"}))))
 
 
@@ -209,7 +209,7 @@
        {:errors
         [{:path [],
           :message
-          "expeceted one of [{:type \"object\", :properties {:a {:type :string, :deferred {:type :a}}}, :required [:a]} {:type \"object\", :properties {:b {:type :string, :deferred {:type :b}}}, :required [:b]}], but no one is valid"}],
+          "expected one of [{:type \"object\", :properties {:a {:type :string, :deferred {:type :a}}}, :required [:a]} {:type \"object\", :properties {:b {:type :string, :deferred {:type :b}}}, :required [:b]}], but no one is valid"}],
         :deferreds [],
         :warnings []}))
 
