@@ -291,7 +291,8 @@
         ctx
         (add-error :uuid ctx "wrong uuid format")))))
 
-(def email-regex #"^[_A-Za-z0-9-\+]+(\.[_A-Za-z0-9-]+)*@[A-Za-z0-9-]+(\.[A-Za-z0-9]+)*(\.[A-Za-z]{2,})$")
+(def email-regex #"[^@]+@[^.]+\..*")
+
 
 (defmethod schema-type
   :email

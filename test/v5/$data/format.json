@@ -41,6 +41,30 @@
         "valid": true
       },
       {
+        "description": "a valid e-mail address",
+        "data": {
+          "str": "joe.bloggs@example-with-dash.com",
+          "strFormat": "email"
+        },
+        "valid": true
+      },
+      {
+        "description": "a valid e-mail address",
+        "data": {
+          "str": "joe.bloggs@example.with-dash.com",
+          "strFormat": "email"
+        },
+        "valid": true
+      },
+      {
+        "description": "an invalid e-mail address (without any dot in domain part)",
+        "data": {
+          "str": "wow.wow@wow",
+          "strFormat": "email"
+        },
+        "valid": false
+      },
+      {
         "description": "an invalid e-mail address",
         "data": {
           "str": "2962",
