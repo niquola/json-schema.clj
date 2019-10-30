@@ -1,4 +1,4 @@
 language: clojure
 script: lein do clean, javac, test
 jdk:
-  - oraclejdk8
+  - oraclejdk9
