@@ -50,7 +50,7 @@
 (defn reduce-indexed 
   "Reduce while adding an index as the second argument to the function"
   ([f coll]
-   (reduce-indexed f (first coll) 0 (rest coll)))
+   (reduce-indexed f (nth coll 0 nil) 0 (rest coll)))
   
   ([f init coll]
    (reduce-indexed f init 0 coll))
@@ -58,9 +58,10 @@
   ([f init ^long i coll]
    (if (empty? coll)
      init
-     (let [v (first coll)
+     (let [v (nth coll 0 nil)
            fv (f init i v)]
        (recur f fv (inc i) (rest coll))))))
+
 
 (defn compile-pointer [ref]
   (let [is-root-path (str/starts-with? ref "#")
@@ -79,13 +80,13 @@
       (if is-return-key
         (fn [ctx]
           (let [path (:path ctx)
-                steps-back (first ref-path)
+                steps-back (nth ref-path 0)
                 ref-path (rest ref-path)
                 absolute-path (concat (drop-last steps-back path) ref-path)]
             (last absolute-path)))
         (fn [ctx]
           (let [path (:path ctx)
-                steps-back (first ref-path)
+                steps-back (nth ref-path 0 nil)
                 ref-path (rest ref-path)
                 absolute-path (concat (drop-last steps-back path) ref-path)]
             (get-in (:doc ctx) absolute-path)))))))
@@ -102,7 +103,7 @@
     exclusive :exclusive
     direction :direction
     bound :bound}]
-  (fn [ctx v]
+  (fn schema-comparator [ctx v]
     (let [$bound (if (fn? bound) (bound ctx) bound)
           $bound (if (and (fn? coerce-bound) (some? $bound)) (coerce-bound $bound) $bound)
           $exclusive (if (fn? exclusive) (exclusive ctx) exclusive)
@@ -164,11 +165,17 @@
                                                     (conj acc vf)
                                                     acc)))
                                               [] (dissoc schema :title :id :$id)))]
-                      (fn [ctx v]
-                        (let [pth (:path ctx)]
-                          (reduce (fn [ctx vf]
-                                    (vf (assoc ctx :path pth) v))
-                                  ctx validators))))
+                      (fn schema-keys [ctx v]
+                        (let [pth (:path ctx)
+                              iter (.iterator ^Iterable validators)]
+                          (if (.hasNext iter)
+                            (loop [ctx ctx]
+                              (let [vf (.next iter)
+                                    ctx (vf (assoc ctx :path pth) v)]
+                                (if (.hasNext iter)
+                                  (recur ctx)
+                                  ctx)))
+                            ctx))))
                     :else
                     (fn [ctx v] (add-error :schema ctx (str "Invalid schema " schema))))]
     (let [ref (build-ref path)]
@@ -180,15 +187,25 @@
                     (swap! reg update id (fn [x] (if x x schema-fn))))))))
     schema-fn))
 
-(defmethod schema-type
-  :string
-  [_]
-  (fn [ctx v]
-    (if (not (or (string? v) (keyword? v)))
-      (add-error :string ctx "expected type of string")
-      (if (str/blank? (str/trim (name v)))
+(defn validate-string [ctx v]
+  (cond
+    (string? v)
+    ctx
+    (keyword? v)
+    ctx
+    :else 
+    (add-error :string ctx "expected type of string")))
+
+#_(if (not (or (string? v) (keyword? v)))
+    (add-error :string ctx "expected type of string")
+    ctx
+    ;; TODO: why not blank
+    #_(if (str/blank? (str/trim (name v)))
         (add-error :string ctx "expected not empty string")
-        ctx))))
+        ctx))
+
+(defmethod schema-type :string [_]
+  validate-string)
 
 
 (defmethod schema-type
@@ -215,7 +232,7 @@
 (defmethod schema-type
   :number
   [_]
-  (fn [ctx v]
+  (fn validate-number [ctx v]
     (if (not (number? v))
       (add-error :date ctx "expected number")
       ctx)))
@@ -238,7 +255,7 @@
 (defmethod schema-type
   :integer
   [_]
-  (fn [ctx v]
+  (fn validate-int [ctx v]
     (if (integer? v)
       ctx
       (add-error :integer ctx (str  "expected integer, got " v)))))
@@ -248,7 +265,7 @@
 (defmethod schema-type
   :datetime
   [_]
-  (fn [ctx v]
+  (fn validate-datetime [ctx v]
     (if (not (string? v))
       (add-error :datetime ctx "datetime should be encoded as string")
       (if (re-matches dateTime-regex v)
@@ -260,7 +277,7 @@
 (defmethod schema-type
   :time
   [_]
-  (fn [ctx v]
+  (fn validate-teme [ctx v]
     (if (not (string? v))
       (add-error :time ctx "time should be encoded as string")
       (if (re-matches time-regex v)
@@ -272,7 +289,7 @@
 (defmethod schema-type
   :oid
   [_]
-  (fn [ctx v]
+  (fn validate-oid [ctx v]
     (if (not (string? v))
       (add-error :oid ctx "oid should be encoded as string")
       (if (re-matches oid-regex v)
@@ -284,7 +301,7 @@
 (defmethod schema-type
   :uuid
   [_]
-  (fn [ctx v]
+  (fn validate-uuid [ctx v]
     (if (not (string? v))
       (add-error :uuid ctx "uuid should be encoded as string")
       (if (re-matches uuid-regex v)
@@ -297,7 +314,7 @@
 (defmethod schema-type
   :email
   [_]
-  (fn [ctx v]
+  (fn validate-email [ctx v]
     (if (not (string? v))
       (add-error :email ctx "email should be encoded as string")
       (if (re-matches email-regex v)
@@ -307,7 +324,7 @@
 (defmethod schema-type
   :object
   [_]
-  (fn [ctx v]
+  (fn validate-obj [ctx v]
     (if (map? v)
       ctx
       (add-error :object ctx "expected object"))))
@@ -315,7 +332,7 @@
 (defmethod schema-type
   :array
   [_]
-  (fn [ctx v]
+  (fn validate-array [ctx v]
     (if (sequential? v)
       ctx
       (add-error :array ctx "expected array"))))
@@ -323,7 +340,7 @@
 (defmethod schema-type
   :null
   [_]
-  (fn [ctx v]
+  (fn validate-null [ctx v]
     (if (nil? v)
       ctx
       (add-error :null ctx "expected null"))))
@@ -331,12 +348,12 @@
 (defmethod schema-type
   :any
   [_]
-  (fn [ctx v] ctx))
+  (fn validate-any [ctx v] ctx))
 
 (defmethod schema-type
   nil 
   [_]
-  (fn [ctx v]
+  (fn schema-type [ctx v]
     (if (nil? v)
       ctx
       (add-error :null ctx "expected null"))))
@@ -344,7 +361,7 @@
 (defmethod schema-type
   :default
   [unknown]
-  (fn [ctx v]
+  (fn schema-default [ctx v]
     (add-error :unknown-type ctx (str "Broken schema: unknown type " unknown))))
 
 
@@ -355,7 +372,7 @@
     (let [validators (->> opts
                           (mapv (fn [o] (if (string? o) (schema-type (keyword o)) (compile-schema o (conj path :type) c-ctx))))
                           doall)]
-      (fn [ctx v]
+      (fn schema-type [ctx v]
         (if (some
              (fn [validator]
                (let [{err :errors} (validator (assoc ctx :errors []) v)]
@@ -364,6 +381,7 @@
           (add-error :type ctx (str "expected type of one of " (str/join ", " opts))))))
     (schema-type (keyword opts))))
 
+;; TODO: can optimize
 (defmethod schema-key
   :properties
   [_ props schema path c-ctx]
@@ -378,15 +396,36 @@
                                 acc)) [] props)
           req-validator (when (not (empty? requireds))
                           (schema-key :required requireds schema path c-ctx))]
-      (fn [ctx v]
+      (fn schema-props [ctx v]
         (let [pth (:path ctx)
               ctx (if req-validator (req-validator ctx v) ctx)]
-          (reduce (fn [ctx [k vf]]
-                    (let [vv (get v k)]
-                      (if (some? vv)
-                        (vf (assoc ctx :path (conj pth k)) vv)
-                        ctx)))
-                  ctx props-validators))))))
+          (let [iter (.iterator ^Iterable v)]
+            (if (.hasNext iter)
+              (loop [ctx ctx]
+                (let [[k vv] (.next iter)
+                      ctx (if-let [vf (get props-validators k)]
+                            (vf (assoc ctx :path (conj pth k)) vv)
+                            ctx)]
+                  (if (.hasNext iter)
+                    (recur ctx)
+                    ctx)))
+              ctx)))))))
+
+;; (set! *warn-on-reflection* true)
+
+#_(->> v
+       (reduce (fn [ctx [k v]]
+                 (if-let [vf (get props-validators k)]
+                   (vf (assoc ctx :path (conj pth k)) v)
+                   ctx))
+               ctx))
+
+#_(reduce (fn schema-props-reduce [ctx [k vf]]
+            (let [vv (get v k)]
+              (if (some? vv)
+                (vf (assoc ctx :path (conj pth k)) vv)
+                ctx)))
+          ctx props-validators)
 
 (defmethod schema-key
   :maxProperties
@@ -425,12 +464,12 @@
   [_ bound schema path c-ctx]
   (cond
     (number? bound)
-    (fn [ctx v]
+    (fn schema-mof [ctx v]
       (if (and (number? v) (not (or (= 0 v) (is-divider? v bound))))
         (add-error :multipleOf ctx (str "expected " v " is multiple of " bound))
         ctx))
     (fn? bound)
-    (fn [ctx v]
+    (fn schema-mof [ctx v]
       (let [$bound (bound ctx)]
         (cond
           (nil? $bound) ctx
@@ -450,12 +489,12 @@
   [_ bound schema path c-ctx]
   (cond
     (number? bound)
-    (fn [ctx v]
+    (fn schema-div [ctx v]
       (if (and (number? v) (not (or (= 0 v) (is-divider? v bound))))
         (add-error :divisibleBy ctx (str "expected " v " is divisible by  " bound))
         ctx))
     (fn? bound)
-    (fn [ctx v]
+    (fn  schema-div [ctx v]
       (let [$bound (bound ctx)]
         (cond
           (nil? $bound) ctx
@@ -481,7 +520,7 @@
   :enum
   [_ enum schema path c-ctx]
   (if (fn? enum)
-    (fn [ctx v]
+    (fn schema-enum [ctx v]
       (let [$enum (enum ctx)]
         (if-not (sequential? $enum)
           (if (nil? $enum)
@@ -490,7 +529,7 @@
           (if-not (some (fn [ev] (json-compare ev v)) $enum)
             (add-error :enum ctx (str "expected one of " (str/join ", " $enum)))
             ctx))))
-    (fn [ctx v]
+    (fn schema-enum [ctx v]
       (if-not (some (fn [ev] (json-compare ev v)) enum)
         (add-error :enum ctx (str "expected one of " (str/join ", " enum)))
         ctx))))
@@ -500,12 +539,12 @@
 (defn const-impl
   [_ const schema path c-ctx]
   (if (fn? const)
-    (fn [ctx v]
+    (fn schema-const [ctx v]
       (let [$const (const ctx)]
         (if-not (json-compare $const v)
           (add-error :constant ctx (str "expected " $const ", but " v))
           ctx)))
-    (fn [ctx v]
+    (fn schema-const [ctx v]
       (if-not (json-compare const v)
         (add-error :constant ctx (str "expected " const ", but " v))
         ctx))))
@@ -519,7 +558,7 @@
 (defmethod schema-key
   :discriminator
   [_ prop schema path c-ctx]
-  (fn [ctx v]
+  (fn schema-discriminator [ctx v]
     (if-let [tp (get v (keyword prop))]
       (if-let [validator (-> c-ctx
                              :reg
@@ -532,7 +571,7 @@
 (defmethod schema-key
   :exclusiveProperties
   [_ ex-props schema path _]
-  (fn [ctx v]
+  (fn schema-exclusive-props [ctx v]
     (if (map? v)
       (reduce
        (fn [ctx {props :properties required :required}]
@@ -574,10 +613,9 @@
 
                                   (or (map? v) (boolean? v))
                                   (compile-schema v (conj path :dependencies k) c-ctx)
-                                  
                                   :else (fn [ctx v] ctx))))
                        {} props))]
-    (fn [ctx v]
+    (fn schema-deps [ctx v]
       (if-not (map? v)
         ctx
         (let [pth (:path ctx)]
@@ -594,7 +632,7 @@
         (doall (reduce (fn [acc [k v]]
                          (assoc acc (re-pattern (name k)) (compile-schema v (conj path :patternProperties (name k)) c-ctx)))
                        {} props))]
-    (fn [ctx v]
+    (fn schema-pattern-props [ctx v]
       (if-not (map? v)
         ctx
         (let [pth (:path ctx)]
@@ -618,7 +656,7 @@
                          (assoc acc (re-pattern (name k))
                                 (assoc g :schema (compile-schema sch (conj path :patternGroups) c-ctx))))
                        {} props))]
-    (fn [ctx v]
+    (fn schema-pat-grp [ctx v]
       (if-not (map? v)
         ctx
         (reduce
@@ -654,7 +692,7 @@
                            (map? props) [props]
                            :else (assert false (str "Not impl extends " props)))
                      (mapv (fn [o] (compile-schema o (conj path :extends) c-ctx)))))]
-    (fn [ctx v]
+    (fn schema-extends [ctx v]
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
                 ctx validators)))))
@@ -663,7 +701,7 @@
   :allOf
   [_ options schema path c-ctx]
   (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :allOf) c-ctx)) options))]
-    (fn [ctx v]
+    (fn schema-all-of [ctx v]
       (let [pth (:path ctx)]
         (reduce (fn [ctx validator] (validator (assoc ctx :path pth) v))
                 ctx validators)))))
@@ -680,7 +718,7 @@
                                       (and (:then clause) (map? (:then clause)))
                                       (assoc :then (compile-schema (:then clause) path c-ctx))))))
                      doall)]
-    (fn [ctx v]
+    (fn schema-switch [ctx v]
       (let [pth (:path ctx)]
         (loop [ctx ctx
                [cl & cls] clauses]
@@ -734,7 +772,7 @@
   (let [pred-v (compile-schema if-expr path c-ctx)
         th-v   (compile-schema (or th true) path c-ctx)
         el-v   (compile-schema (or el true) path c-ctx)]
-    (fn [ctx v]
+    (fn schema-if [ctx v]
       (if (empty? (:errors (pred-v ctx v)))
         (th-v ctx v)
         (el-v ctx v)))))
@@ -754,7 +792,7 @@
   :not
   [_ subschema schema path c-ctx]
   (let [validator (compile-schema subschema (conj path :not) c-ctx)]
-    (fn [ctx v]
+    (fn schema-not [ctx v]
       (let [{errs :errors} (validator (assoc ctx :errors []) v)]
         (if (empty? errs)
           (add-error :not ctx (str "Expected not " subschema))
@@ -767,7 +805,7 @@
                      (doall (mapv (fn [sch]
                               (compile-schema (if (string? sch) {:type sch} sch) (conj path :disallow) c-ctx))
                             subsch)))]
-    (fn [ctx v]
+    (fn schema-disallow [ctx v]
       (if (some (fn [vl] (-> (vl ctx v) :errors empty?)) validators)
         (add-error :disallow ctx (str "Disallowed by " (json/generate-string subschema)))
         ctx))))
@@ -776,7 +814,7 @@
   :anyOf
   [_ options schema path c-ctx]
   (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :anyOf) c-ctx)) options))]
-    (fn [ctx v]
+    (fn schema-any-of [ctx v]
       (if (some (fn [validator]
                    (let [res (validator (assoc ctx :errors []) v)]
                      (empty? (:errors res))))
@@ -788,7 +826,7 @@
   :oneOf
   [_ options schema path c-ctx]
   (let [validators (doall (mapv (fn [o] (compile-schema o (conj path :oneOf) c-ctx)) options))]
-    (fn [ctx v]
+    (fn schema-one-of [ctx v]
       (loop [cnt 0
              res nil
              validators validators]
@@ -796,7 +834,7 @@
           (if (= 1 cnt)
             (update ctx :deferreds (fn [x] (into x (or (:deferreds res) []))))
             (add-error :oneOf ctx (str "expected one of " options ", but no one is valid")))
-          (let [new-res ((first validators) (assoc ctx :errors [] :deferreds []) v)]
+          (let [new-res ((nth validators 0) (assoc ctx :errors [] :deferreds []) v)]
             (if (empty? (:errors new-res))
               (if (> cnt 0)
                 (add-error :oneOf ctx (str "expected one of " options ", but more then one are valid"))
@@ -816,7 +854,7 @@
         is-path-prop? (fn [k] (let [k-str (name k)] (some #(re-find % k-str) pat-props-regex)))]
     (cond
       (= false ap)
-      (fn [ctx v]
+      (fn schema-additional-props [ctx v]
         (if (map? v)
           (let [v-keys (set (keys v))
                 extra-keys (clojure.set/difference v-keys props-keys)]
@@ -832,7 +870,7 @@
 
       (map? ap)
       (let [ap-validator (compile-schema ap (conj path :additionalProperties) c-ctx)]
-        (fn [ctx v]
+        (fn schema-additional-props [ctx v]
           (if (map? v)
             (let [v-keys (set (keys v))
                   extra-keys (clojure.set/difference v-keys props-keys)]
@@ -858,7 +896,7 @@
   [_ props schema path c-ctx]
   (cond
     (sequential? props)
-    (fn [ctx v]
+    (fn schema-req [ctx v]
       (if (map? v)
         (let [pth (:path ctx)]
           (reduce (fn [ctx k]
@@ -869,7 +907,7 @@
         ctx))
 
     (fn? props)
-    (fn [ctx v]
+    (fn schema-req [ctx v]
       (let [$props (props ctx)]
         (cond
           (nil? $props) ctx
@@ -892,7 +930,7 @@
   (cond
     (sequential? props)
     (let [re-props (set (map (fn [x] (re-pattern (name x))) props))]
-      (fn [ctx v]
+      (fn schema-pat-req [ctx v]
         (if-not (map? v)
           ctx
           (let [not-matched-pats (reduce
@@ -978,10 +1016,10 @@
         registry (:reg c-ctx)]
     ;; (println "Pointer" r " from " path " ids " ids)
     (if-let [validator (and (str/starts-with? r "http") (external-schema r c-ctx))]
-      (fn [ctx v]
+      (fn schema-ref [ctx v]
         (let [res (validator ctx v)]
           (assoc ctx :errors (into (:errors ctx) (:errors res)))))
-      (fn [ctx v]
+      (fn schema-ref [ctx v]
         (if-let [val (get @registry r)]
           (val ctx v)
           (add-error :$ref ctx (str "Could not resolve $ref = " r)))))))
@@ -1108,8 +1146,9 @@
   :default [_]
   identity) 
   
-((compile-format-coerce :time)
- "13:15:17.000+01:00")
+(comment 
+  ((compile-format-coerce :time)
+   "13:15:17.000+01:00"))
 
 (defmethod schema-key
   :formatMaximum
@@ -1161,13 +1200,13 @@
   [k uniq schema path c-ctx]
   (cond
     (= true uniq)
-    (fn [ctx v]
+    (fn schema-uniq [ctx v]
       (if (and (sequential? v) (not (= (count v) (count (set v)))))
         (add-error :uniqueItems ctx "expected unique items")
         ctx))
 
     (fn? uniq)
-    (fn [ctx v]
+    (fn schema-uniq  [ctx v]
       (let [$uniq (uniq ctx)]
         (cond
           (nil? $uniq) ctx
@@ -1320,7 +1359,7 @@
   :format
   [_ fmt schema path c-ctx]
   (if (fn? fmt)
-    (fn [ctx v]
+    (fn schema-fmt [ctx v]
       (if-let [$fmt (fmt ctx)]
         (if-let [fmt-fn (and (or (string? $fmt) (keyword? $fmt))
                              (get format-fns (name $fmt)))]
@@ -1336,14 +1375,14 @@
 
     (if (or (string? fmt) (keyword fmt))
       (if-let [fmt-fn (get format-fns (name fmt))]
-        (fn [ctx v]
+        (fn schema-fmt2 [ctx v]
           (if (and v (string? v))
             (if-let [err (fmt-fn v)]
               (add-error :format ctx (str "expected format " fmt ", but [" err "]"))
               ctx)
             ctx))
         (let [regex (get format-regexps (name fmt))]
-          (fn [ctx v]
+          (fn schema-fmt3 [ctx v]
             (if (nil? regex)
               (add-error :format ctx (str "Unknown format " fmt))
               (if (and (string? v) (not (re-find regex v)))
@@ -1357,13 +1396,13 @@
   (cond
     (string? fmt)
     (let [regex (re-pattern fmt)]
-      (fn [ctx v]
+      (fn schema-patt [ctx v]
         (if (and (string? v) (not (re-find regex v)))
           (add-error :pattern ctx (str "expected format " fmt))
           ctx)))
 
     (fn? fmt)
-    (fn [ctx v]
+    (fn schema-patt [ctx v]
       (let [$fmt (fmt ctx)]
         (cond
           (nil? $fmt) ctx
@@ -1381,7 +1420,7 @@
   :contains
   [_ subsch schema path c-ctx]
   (let [validator (compile-schema subsch path c-ctx)]
-    (fn [ctx v]
+    (fn schema-contains [ctx v]
       (if (and (sequential? v)
                (not (some (fn [vv]
                             (let [{err :errors} (validator (assoc ctx :errors []) vv)]
@@ -1394,7 +1433,7 @@
   :propertyNames
   [_ prop-schema schema path c-ctx]
   (let [validator (compile-schema prop-schema path c-ctx)]
-    (fn [ctx v]
+    (fn schema-prop-names [ctx v]
       (if (map? v)
         (reduce
          (fn [ctx prop]
@@ -1411,7 +1450,7 @@
 (defmethod schema-key
   :subset
   [_ arr _ _ _]
-  (fn [ctx v]
+  (fn schema-subset [ctx v]
     (assert (or (fn? arr) (sequential? arr)))
     (let [arr (if (fn? arr) (arr ctx) arr)]
       (if (clojure.set/subset? (set v) (set arr))
@@ -1421,7 +1460,7 @@
 (defmethod schema-key
   :deferred
   [_ annotation schema path c-ctx]
-  (fn [ctx v]
+  (fn schema-deferred [ctx v]
     (add-deferred ctx v annotation)))
 
 (defmethod schema-key
@@ -1430,16 +1469,25 @@
   (cond
     (or (map? items) (boolean? items))
     (let [validator (compile-schema items (conj path :items) c-ctx)]
-      (fn [ctx vs]
+      (fn schema-items [ctx vs]
         (if-not (sequential? vs)
           ctx
           (if-not validator
             ctx
-            (let [pth (:path ctx)]
-              (reduce-indexed
-               (fn [ctx idx v]
-                 (validator (assoc ctx :path (conj pth idx)) v))
-               ctx vs))))))
+            (let [pth (:path ctx)
+                  cnt (dec (count vs))
+                  iter (.iterator ^Iterable vs)]
+              (if (.hasNext iter)
+                (loop [ctx ctx i 0]
+                  (let [v (.next iter)
+                        ctx (validator (assoc ctx :path (conj pth i)) v)]
+                    (if (.hasNext iter)
+                      (recur ctx (inc i))
+                      ctx))) ctx))))))
+    #_(reduce-indexed
+       (fn schema-items-map [ctx idx v]
+         (validator (assoc ctx :path (conj pth idx)) v))
+       ctx vs)
 
     (sequential? items)
     (let [validators (doall (map-indexed (fn [idx x]
@@ -1447,7 +1495,7 @@
                                              (compile-schema x (into path [:items idx]) c-ctx)
                                              (assert false (pr-str "Items:" items)))) items))
           ai-validator (when-not (or (nil? ai) (boolean? ai)) (compile-schema ai path c-ctx))]
-      (fn [ctx vs]
+      (fn schema-items2 [ctx vs]
         (if-not (sequential? vs)
           (add-error :items ctx "expected array")
           (let [pth (:path ctx)]
@@ -1467,12 +1515,12 @@
                   (and (not (empty? vs))
                        (empty? validators)
                        ai-validator) 
-                  (recur  (inc idx) [] (rest vs) (ai-validator new-ctx (first vs)))
+                  (recur  (inc idx) [] (rest vs) (ai-validator new-ctx (nth vs 0 nil)))
 
                   (and (not (empty? vs))
                        (not (empty? validators))) 
                   (recur (inc idx) (rest validators) (rest vs)
-                         ((first validators) new-ctx (first vs)))
+                         ((nth validators 0 nil) new-ctx (nth vs 0 nil)))
 
                   :else ctx ;; not sure
 
