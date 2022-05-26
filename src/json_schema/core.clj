@@ -6,6 +6,8 @@
   (:import java.net.URL
            java.time.LocalDate))
 
+(set! *warn-on-reflection* true)
+
 (declare compile)
 (declare compile-registry)
 
@@ -384,48 +386,62 @@
 ;; TODO: can optimize
 (defmethod schema-key
   :properties
-  [_ props schema path c-ctx]
+  [_ props {ap :additionalProperties :as schema} path c-ctx]
   (when (map? props)
     (let [props-validators
-          (doall (reduce (fn [acc [k v]]
-                           (assoc acc k (compile-schema v (into path [:properties (keyword k)]) c-ctx)))
-                         {} props))
-          requireds (reduce (fn [acc [k v]]
-                              (if (= true (:required v))
-                                (conj acc k)
-                                acc)) [] props)
-          req-validator (when (not (empty? requireds))
+          (doall (->> props
+                      (reduce (fn [acc [k v]]
+                                (assoc acc k (compile-schema v (into path [:properties (keyword k)]) c-ctx)))
+                              {})))
+          requireds (->> props
+                        (reduce (fn [acc [k v]]
+                                  (if (= true (:required v))
+                                    (conj acc k)
+                                    acc)) []))
+          req-validator (when (seq requireds)
                           (schema-key :required requireds schema path c-ctx))]
-      (fn schema-props [ctx v]
-        (let [pth (:path ctx)
-              ctx (if req-validator (req-validator ctx v) ctx)]
-          (let [iter (.iterator ^Iterable v)]
-            (if (.hasNext iter)
-              (loop [ctx ctx]
-                (let [[k vv] (.next iter)
-                      ctx (if-let [vf (get props-validators k)]
-                            (vf (assoc ctx :path (conj pth k)) vv)
-                            ctx)]
-                  (if (.hasNext iter)
-                    (recur ctx)
-                    ctx)))
-              ctx)))))))
+      (if (= ap false)
+        (fn schema-props-ap [ctx v]
+          (if (map? v)
+            (let [pth (:path ctx)
+                  ctx (if req-validator (req-validator ctx v) ctx)
+                  iter (.iterator ^Iterable v)]
+              (if (.hasNext iter)
+                (loop [ctx ctx]
+                  (let [^clojure.lang.MapEntry item (.next iter)
+                        k (.getKey item)
+                        kn (name k)
+                        vv (.getValue item)
+                        ctx (if-let [vf (get props-validators k)]
+                              (vf (assoc ctx :path (conj pth k)) vv)
+                              (if (or (str/starts-with? kn "_")
+                                      (str/starts-with? kn "fhir_"))
+                                ctx
+                                (add-error :additionalProperties (assoc ctx :path (conj pth k)) "extra property")))]
+                    (if (.hasNext iter)
+                      (recur ctx)
+                      ctx)))
+                ctx))
+            ctx))
 
-;; (set! *warn-on-reflection* true)
-
-#_(->> v
-       (reduce (fn [ctx [k v]]
-                 (if-let [vf (get props-validators k)]
-                   (vf (assoc ctx :path (conj pth k)) v)
-                   ctx))
-               ctx))
-
-#_(reduce (fn schema-props-reduce [ctx [k vf]]
-            (let [vv (get v k)]
-              (if (some? vv)
-                (vf (assoc ctx :path (conj pth k)) vv)
-                ctx)))
-          ctx props-validators)
+        (fn schema-props [ctx v]
+          (if (map? v)
+            (let [pth (:path ctx)
+                  ctx (if req-validator (req-validator ctx v) ctx)
+                  iter (.iterator ^Iterable v)]
+              (if (.hasNext iter)
+                (loop [ctx ctx]
+                  (let [^clojure.lang.MapEntry item (.next iter)
+                        k (.getKey item)
+                        vv (.getValue item)
+                        ctx (if-let [vf (get props-validators k)]
+                              (vf (assoc ctx :path (conj pth k)) vv)
+                              ctx)]
+                    (if (.hasNext iter)
+                      (recur ctx)
+                      ctx)))
+                ctx))
+            v))))))
 
 (defmethod schema-key
   :maxProperties
@@ -638,14 +654,14 @@
         (let [pth (:path ctx)]
           (reduce
            (fn [ctx [k vv]]
-             (let [k-str (name k)]
-               (let [new-ctx (assoc ctx :path (conj pth k))]
-                 (reduce
-                  (fn [ctx [pat validator]]
-                    (if (re-find pat k-str)
-                      (validator new-ctx vv)
-                      ctx))
-                  ctx props-map))))
+             (let [k-str (name k)
+                   new-ctx (assoc ctx :path (conj pth k))]
+               (reduce
+                (fn [ctx [pat validator]]
+                  (if (re-find pat k-str)
+                    (validator new-ctx vv)
+                    ctx))
+                ctx props-map)))
            ctx v))))))
 
 (defmethod schema-key
@@ -841,7 +857,9 @@
                 (recur (inc cnt) new-res (rest validators)))
               (recur cnt res (rest validators)))))))))
 
-(defmethod schema-key
+(defmethod schema-key :additionalProperties [& args] nil)
+
+#_(defmethod schema-key
   :additionalProperties
   [_ ap {props :properties
          pat-props :patternProperties
