@@ -412,12 +412,15 @@
                         k (.getKey item)
                         kn (name k)
                         vv (.getValue item)
-                        ctx (if-let [vf (get props-validators k)]
-                              (vf (assoc ctx :path (conj pth k)) vv)
-                              (if (or (str/starts-with? kn "_")
-                                      (str/starts-with? kn "fhir_"))
-                                ctx
-                                (add-error :additionalProperties (assoc ctx :path (conj pth k)) "extra property")))]
+
+                        ctx (if (some? vv)
+                              (if-let [vf (get props-validators k)]
+                               (vf (assoc ctx :path (conj pth k)) vv)
+                               (if (or (str/starts-with? kn "_")
+                                       (str/starts-with? kn "fhir_"))
+                                 ctx
+                                 (add-error :additionalProperties (assoc ctx :path (conj pth k)) "extra property")))
+                              ctx)]
                     (if (.hasNext iter)
                       (recur ctx)
                       ctx)))
