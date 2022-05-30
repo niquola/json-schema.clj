@@ -369,7 +369,7 @@
 
 (defmethod schema-key
   :type
-  [k opts schema path c-ctx] 
+  [k opts schema path c-ctx]
   (if (sequential? opts)
     (let [validators (->> opts
                           (mapv (fn [o] (if (string? o) (schema-type (keyword o)) (compile-schema o (conj path :type) c-ctx))))
@@ -441,7 +441,7 @@
                       (recur ctx)
                       ctx)))
                 ctx))
-            v))))))
+            ctx))))))
 
 (defmethod schema-key
   :maxProperties
