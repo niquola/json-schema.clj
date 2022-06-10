@@ -437,9 +437,11 @@
                   (let [^clojure.lang.MapEntry item (.next iter)
                         k (.getKey item)
                         vv (.getValue item)
-                        ctx (if-let [vf (get props-validators k)]
-                              (vf (assoc ctx :path (conj pth k)) vv)
-                              ctx)]
+                        ctx (if (some? vv)
+                                (if-let [vf (get props-validators k)]
+                                  (vf (assoc ctx :path (conj pth k)) vv)
+                                  ctx)
+                                ctx)]
                     (if (.hasNext iter)
                       (recur ctx)
                       ctx)))
