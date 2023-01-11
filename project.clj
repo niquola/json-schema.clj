@@ -7,8 +7,8 @@
   :resource-paths ["resources" "JSON-Schema-Test-Suite/tests"]
   :repositories   [["clojars"  {:url "https://clojars.org/repo" :sign-releases false}]]
 
-  :dependencies [[org.clojure/clojure "1.10.0"]
-                 [cheshire "5.6.3"]]
+  :dependencies [[org.clojure/clojure "1.11.1"]
+                 [cheshire "5.11.0"]]
 
   :profiles {:dev {;;:warn-on-reflection true
                    :dependencies [[http-kit "2.2.0"]
